@@ -381,7 +381,7 @@ struct Stage: View {
                     } else { buffering = false; playErr = i.error?.localizedDescription ?? "Playback error" }
                 }
             }
-        })
+        }
         player.replaceCurrentItem(with: item)
         let start = pb.startSec
         if !pb.isLive && start > 1 { await player.seek(to: CMTime(seconds: start, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) }
