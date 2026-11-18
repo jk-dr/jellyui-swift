@@ -170,10 +170,12 @@ actor LyricsStore {
 
     func cached(_ id: String) -> [LyricLine]? { done[id] }
     func markFailed(_ id: String) { failures[id] = true }
+    func didFail(_ id: String) -> Bool { failures[id] == true }
 
     func load(_ it: Item) async -> [LyricLine]? {
         if let c = done[it.id] { return c }
         if let at = none[it.id], Date().timeIntervalSince(at) < 1800 { return nil }
+        failures[it.id] = nil
         if let t = running[it.id] { return await t.value }
         let t = Task<[LyricLine]?, Never> { await Self.fetch(it) }
         running[it.id] = t
@@ -185,7 +187,6 @@ actor LyricsStore {
         } else if failures[it.id] != true {
             none[it.id] = Date() // a clean "no lyrics" answer is remembered; a failed request is not
         }
-        failures[it.id] = nil
         return r
     }
 

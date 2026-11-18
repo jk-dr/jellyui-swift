@@ -308,7 +308,7 @@ struct MusicScreen: View {
         let tileW = (inner - 10 * CGFloat(cols - 1)) / CGFloat(cols)
         let pages = max(1, Int(ceil(Double(total) / Double(PAGE))))
         let pls = [Item(id: "favourites", name: "Favourites", type: "Playlist")] + playlists.filter { $0.id != "favourites" }
-        let mixById = Dictionary(uniqueKeysWithValues: (mixes?.items ?? []).map { ($0.id.replacingOccurrences(of: "-", with: "").lowercased(), $0) })
+        let mixById = Dictionary((mixes?.items ?? []).map { ($0.id.replacingOccurrences(of: "-", with: "").lowercased(), $0) }, uniquingKeysWith: { _, b in b })
 
         Page(refresh: { await refresh() }) {
             PageTitle(text: "Music")

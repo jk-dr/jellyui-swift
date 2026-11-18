@@ -25,8 +25,6 @@ struct MarqueeText: View {
         let cruise = max(0.01, Double(d / SPEED))
         let cycle = HOLD + cruise
         ZStack(alignment: center && !over ? .center : .leading) {
-            Text(text).font(font).foregroundStyle(color).lineLimit(1).fixedSize().opacity(0)
-                .background(GeometryReader { g in Color.clear.onAppear { w = g.size.width }.onChange(of: text) { _, _ in w = g.size.width } })
             if over {
                 TimelineView(.animation) { tl in
                     let t = tl.date.timeIntervalSince(start).truncatingRemainder(dividingBy: cycle)
@@ -42,6 +40,10 @@ struct MarqueeText: View {
         }
         .frame(maxWidth: .infinity, alignment: center ? .center : .leading).clipped()
         .background(GeometryReader { g in Color.clear.onAppear { box = g.size.width }.onChange(of: g.size.width) { _, v in box = v } })
+        .background(alignment: .leading) {
+            Text(text).font(font).lineLimit(1).fixedSize().hidden()
+                .background(GeometryReader { g in Color.clear.onAppear { w = g.size.width }.onChange(of: g.size.width) { _, v in w = v } })
+        }
         .onChange(of: text) { _, _ in start = Date() }
     }
 }
@@ -53,6 +55,7 @@ struct MarqueeText: View {
 struct MiniPlayer: View {
     @Environment(PlayerModel.self) private var pm
     @Environment(Nav.self) private var nav
+    @State private var closeAsk = false
 
     var body: some View {
         if let it = pm.current {
@@ -80,7 +83,7 @@ struct MiniPlayer: View {
                 Menu {
                     Button { open() } label: { Label("Lyrics and full screen", systemImage: "music.quarternote.3") }
                     Button { open() } label: { Label("Queue", systemImage: "list.bullet") }
-                    Button(role: .destructive) { pm.stop() } label: { Label("Close playback", systemImage: "xmark") }
+                    Button(role: .destructive) { closeAsk = true } label: { Label("Close playback", systemImage: "xmark") }
                 } label: { Icon(name: "moreV", size: 22, color: Color(hex: 0xd4d4d4)).frame(width: 38, height: 38) }
                     .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 10).padding(.top, 65)
                 MiniProgress(duration: pm.duration)
@@ -91,6 +94,10 @@ struct MiniPlayer: View {
             .background(Color(red: 18 / 255, green: 18 / 255, blue: 20 / 255).opacity(0.55), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .padding(.horizontal, 8).padding(.bottom, 8)
             .gesture(DragGesture(minimumDistance: 10).onEnded { v in if v.translation.height < -40 && abs(v.translation.width) < 24 { open() } })
+            .alert("Close playback?", isPresented: $closeAsk) {
+                Button("Cancel", role: .cancel) {}
+                Button("Close", role: .destructive) { pm.stop() }
+            } message: { Text("This stops the music and removes everything from the queue.") }
         }
     }
 
@@ -160,7 +167,7 @@ struct NowPlaying: View {
             if showLyrics {
                 ZStack {
                     if early && !lines.isEmpty {
-                        LyricsView(lines: lines, player: pm, topInset: 25, bottomInset: 0)
+                        LyricsView(lines: lines, player: pm, topInset: 25, bottomInset: UIScreen.main.bounds.height * 0.4)
                             .mask(LinearGradient(stops: [
                                 .init(color: .clear, location: 0), .init(color: .black.opacity(0.55), location: 0.06), .init(color: .black, location: 0.16),
                                 .init(color: .black, location: 0.74), .init(color: .black.opacity(0.45), location: 0.88), .init(color: .clear, location: 1),
@@ -233,7 +240,7 @@ struct NowPlaying: View {
         if let c = await LyricsStore.shared.cached(it.id) { lines = c; loading = false; return }
         lines = []; loading = true
         var r = await LyricsStore.shared.load(it)
-        if r == nil { try? await Task.sleep(nanoseconds: 1_200_000_000); if Task.isCancelled { return }; r = await LyricsStore.shared.load(it) }
+        if r == nil, await LyricsStore.shared.didFail(it.id) { try? await Task.sleep(nanoseconds: 1_200_000_000); if Task.isCancelled { return }; r = await LyricsStore.shared.load(it) }
         guard it.id == pm.current?.id else { return }
         lines = r ?? []; loading = false
     }

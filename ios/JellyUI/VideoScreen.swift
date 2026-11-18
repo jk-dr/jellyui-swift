@@ -33,7 +33,8 @@ struct PlayerSurface: UIViewRepresentable {
         v.playerLayer.player = player
         v.playerLayer.videoGravity = .resizeAspect
         v.backgroundColor = .black
-        onReady(v.playerLayer)
+        let l = v.playerLayer
+        DispatchQueue.main.async { onReady(l) }
         return v
     }
     func updateUIView(_ v: PlayerLayerView, context: Context) {}
@@ -262,6 +263,7 @@ struct Stage: View {
     final class Observers {
         var time: Any?
         var items: [NSKeyValueObservation] = []
+        var status: NSKeyValueObservation?
         var end: NSObjectProtocol?
     }
 
@@ -272,9 +274,13 @@ struct Stage: View {
             let w = geo.size.width
             ZStack {
                 Color.black
-                PlayerSurface(player: player) { l in layer = l; pip = AVPictureInPictureController(playerLayer: l) }.ignoresSafeArea()
+                PlayerSurface(player: player) { l in
+                    layer = l
+                    pip = AVPictureInPictureController(playerLayer: l)
+                    pip?.canStartPictureInPictureAutomaticallyFromInline = true
+                }.ignoresSafeArea()
                 Color.clear.contentShape(Rectangle()).onTapGesture(count: 1) { loc in tap(loc.x, w) }
-                    .gesture(SpatialTapGesture().onEnded { tap($0.location.x, w) })
+
                 subtitles(bottom: visible ? 110 + Insets.bottom : 36 + Insets.bottom)
                 if let f = flash {
                     Text(f.text).font(.system(size: 18, weight: .heavy)).foregroundStyle(.white).padding(.horizontal, 18).padding(.vertical, 10)
@@ -318,6 +324,7 @@ struct Stage: View {
     private func setup() {
         fav = pb.favourite
         Orient.set(.landscape)
+        UIApplication.shared.isIdleTimerDisabled = true
         player.allowsExternalPlayback = true
         PlayerModel.shared.pause()
         let o = observers
@@ -347,9 +354,13 @@ struct Stage: View {
         reportStop()
         if let t = observers.time { player.removeTimeObserver(t) }
         if let e = observers.end { NotificationCenter.default.removeObserver(e) }
+        observers.status?.invalidate()
+        observers.items.forEach { $0.invalidate() }
+        observers.items = []
         player.pause()
         player.replaceCurrentItem(with: nil)
         hideTask?.cancel()
+        UIApplication.shared.isIdleTimerDisabled = false
     }
 
     private func swap(to src: VSource) async {
@@ -359,8 +370,8 @@ struct Stage: View {
         let item = AVPlayerItem(url: src.url)
         if let e = observers.end { NotificationCenter.default.removeObserver(e) }
         observers.end = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { _ in ended() }
-        observers.items.removeAll { $0.description.contains("status") }
-        observers.items.append(item.observe(\.status, options: [.new]) { i, _ in
+        observers.status?.invalidate()
+        observers.status = item.observe(\.status, options: [.new]) { i, _ in
             DispatchQueue.main.async {
                 if i.status == .readyToPlay { buffering = false; playErr = ""; errRetries = 0 }
                 if i.status == .failed {

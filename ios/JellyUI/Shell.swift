@@ -285,7 +285,7 @@ struct Page<Content: View>: View {
             VStack(alignment: .leading, spacing: 0) {
                 Color.clear.frame(height: Insets.top)
                 content()
-                Color.clear.frame(height: Insets.bar + Insets.bottom + (player.current != nil ? 72 : 0) + 16)
+                Color.clear.frame(height: Insets.bar + Insets.bottom + (player.current != nil ? 156 : 0) + 16)
             }
         }
         Group {

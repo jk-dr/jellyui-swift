@@ -245,7 +245,7 @@ struct CollectionScreen: View {
         Page {
             HStack(spacing: 14) {
                 if let logoURL {
-                    Pic_(logoURL, radius: 12, fit: .fit).frame(width: logoKind == "provider" ? 64 : 110, height: 64)
+                    Pic_(logoURL, radius: 12, fit: logoKind == "provider" ? .fill : .fit).padding(logoKind == "provider" ? 0 : 8).frame(width: logoKind == "provider" ? 64 : 110, height: 64)
                         .background(Color.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 } else {
                     Text(name).font(.q(28)).foregroundStyle(Color.pink).lineLimit(2).shadow(color: .black, radius: 4, y: 1)
@@ -276,7 +276,7 @@ struct CollectionScreen: View {
                 if !finished { ProgressView().tint(Color.dimText).frame(maxWidth: .infinity).padding(24) }
             }
         }
-        .task { await load() }
+        .task { if tiles.isEmpty { await load() } }
     }
 
     private func load() async {
@@ -300,8 +300,8 @@ struct CollectionScreen: View {
         defer { busy = false }
         guard let r = await Plugin.more(service ? "service" : "genre", id, page: nextPage) else { finished = true; return }
         nextPage += 1
-        let have = Set(tiles.map { $0.t + $0.id })
-        tiles += (r.items ?? []).filter { !have.contains($0.t + $0.id) }
+        let have = Set(tiles.map { $0.id })
+        tiles += (r.items ?? []).filter { !have.contains($0.id) }
         if r.done == true || (r.items ?? []).isEmpty { finished = true }
     }
 }

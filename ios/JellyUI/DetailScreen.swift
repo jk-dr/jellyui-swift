@@ -91,7 +91,8 @@ struct DetailScreen: View {
             else if let e = error { Note(e, error: true).padding(.top, 130) }
             else { ProgressView().tint(Color.dimText).frame(maxWidth: .infinity).padding(.top, 200) }
         }
-        .task(id: id) { await load() }
+        .task(id: id) { if item == nil && title == nil { await load() } }
+        .onChange(of: nav.play) { _, n in if n == nil && item != nil { Task { await load() } } }
         .task(id: model?.tmdb) { await pollDownload(model) }
         .alert("Delete “\(model?.title ?? "")”?", isPresented: $confirmDelete) {
             Button("Cancel", role: .cancel) {}
@@ -255,7 +256,7 @@ struct DetailScreen: View {
         let names = ["Requested", "Grabbing", "Preparing", "Streaming", "Downloading", "InLibrary", "Failed", "Cancelled"]
         while !Task.isCancelled {
             if let r = await Plugin.onDemandStatus(tmdb) {
-                let low = Dictionary(uniqueKeysWithValues: r.map { ($0.key.lowercased(), $0.value) })
+                let low = Dictionary(r.map { ($0.key.lowercased(), $0.value) }, uniquingKeysWith: { _, b in b })
                 let st: String = (low["status"] as? Int).flatMap { names.indices.contains($0) ? names[$0] : nil } ?? (low["status"] as? String) ?? ""
                 let gate = (low["gate"] as? [String: Any])?.first { $0.key.lowercased() == "open" }?.value as? Bool ?? false
                 waiting = ["Requested", "Grabbing", "Preparing", "Streaming", "Downloading"].contains(st) && !gate

@@ -62,7 +62,7 @@ struct SearchScreen: View {
         .task(id: q) { await runSearch() }
         .onAppear {
             withAnimation(.timingCurve(0.22, 0.61, 0.36, 1, duration: 0.38)) { open = 1 }
-            focused = true
+            DispatchQueue.main.async { focused = true }
         }
     }
 

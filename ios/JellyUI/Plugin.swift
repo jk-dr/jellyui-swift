@@ -86,7 +86,8 @@ final class Settings {
 
 struct SeerrTile: Decodable, Hashable, Identifiable {
     var t: String
-    var id: String
+    var rawId: String
+    var id: String { t + rawId }
     var title: String
     var year: String?
     var poster: String?
@@ -96,7 +97,7 @@ struct SeerrTile: Decodable, Hashable, Identifiable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
         t = (try? c.decode(String.self, forKey: .t)) ?? "m"
-        id = (try? c.decode(Flex.self, forKey: .id).s) ?? ""
+        rawId = (try? c.decode(Flex.self, forKey: .id).s) ?? ""
         title = (try? c.decode(String.self, forKey: .title)) ?? ""
         year = try? c.decode(Flex.self, forKey: .year).s
         poster = try? c.decode(String.self, forKey: .poster)
@@ -106,7 +107,7 @@ struct SeerrTile: Decodable, Hashable, Identifiable {
     var card: Card {
         let movie = t == "m"
         return Card(id: id, title: title, sub: (movie ? "Movie" : "Show") + ((year ?? "").isEmpty ? "" : " · \(year!)"),
-                    img: Pic.tmdb(poster, "w342"), t: movie ? "m" : "s", route: movie ? .movie("tmdb-\(id)") : .show("tmdb-\(id)"))
+                    img: Pic.tmdb(poster, "w342"), t: movie ? "m" : "s", route: movie ? .movie("tmdb-" + rawId) : .show("tmdb-" + rawId))
     }
 }
 

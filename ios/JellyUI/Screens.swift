@@ -19,6 +19,7 @@ struct JellyUIApp: App {
             }
             .environment(session)
             .environment(player)
+            .onChange(of: session.isSignedIn) { _, on in if !on { PlayerModel.shared.stop() } }
             .preferredColorScheme(.dark)
             .tint(Color.pink)
             .background(Color.bg.ignoresSafeArea())

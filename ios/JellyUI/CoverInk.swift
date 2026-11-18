@@ -30,6 +30,7 @@ extension EnvironmentValues {
     var ink: Ink { get { self[InkKey.self] } set { self[InkKey.self] = newValue } }
 }
 
+@MainActor
 enum CoverInk {
     private static func luma(_ c: Rgb) -> Double { 0.299 * c.0 + 0.587 * c.1 + 0.114 * c.2 }
     private static func lin(_ v: Double) -> Double { let s = v / 255; return s <= 0.03928 ? s / 12.92 : pow((s + 0.055) / 1.055, 2.4) }

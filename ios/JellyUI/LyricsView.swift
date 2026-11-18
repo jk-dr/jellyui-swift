@@ -46,11 +46,11 @@ private struct FillWord: View {
         let soft = 0.35
         let pos = p * (1 + soft) // the edge travels past the end so the last letters finish lit
         Text(text)
-            .font(.system(size: size, weight: .bold))
+            .font(.lato(size))
             .foregroundStyle(ink.color(0.32))
             .overlay(alignment: .leading) {
                 Text(text)
-                    .font(.system(size: size, weight: .bold))
+                    .font(.lato(size))
                     .foregroundStyle(ink.color())
                     .mask {
                         LinearGradient(stops: [
@@ -93,7 +93,7 @@ private struct LyricRow: View, Equatable {
                 }
             } else {
                 Text(line.text)
-                    .font(.system(size: size, weight: .bold))
+                    .font(.lato(size))
                     .foregroundStyle(ink.color())
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -172,10 +172,11 @@ struct LyricsView: View {
                 ForEach(Array(lines.enumerated()), id: \.element.id) { i, l in
                     let isActive = synced && i == idx
                     let upcoming = synced && i > idx && i <= idx + 2 && (l.t ?? 1e9) - t < 2.5
+                    let paused = !player.isPlaying
                     LyricRow(
                         ink: ink,
                         line: l, size: 30, active: isActive || !synced,
-                        level: !synced ? 0.9 : (isActive ? 1 : (upcoming ? 0.3 : 0.15)),
+                        level: paused ? 0.07 : (!synced ? 0.9 : (isActive ? 1 : (upcoming ? 0.3 : 0.15))),
                         t: isActive ? t : 0,
                         onTap: { if let lt = l.t { player.seek(to: max(0, lt - 0.05)) } }
                     )

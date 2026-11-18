@@ -441,12 +441,12 @@ struct Pic_: View {
     }
 
     var body: some View {
-        ZStack {
-            Theme.surface
-            if let image {
-                Image(uiImage: image).resizable().aspectRatio(contentMode: fit).transition(.opacity)
+        Theme.surface
+            .overlay {
+                if let image {
+                    Image(uiImage: image).resizable().aspectRatio(contentMode: fit).transition(.opacity)
+                }
             }
-        }
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
         .task(id: url) {
             guard let url else { image = nil; return }

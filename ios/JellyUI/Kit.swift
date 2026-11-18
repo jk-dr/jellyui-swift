@@ -458,15 +458,14 @@ struct HRow<Content: View>: View {
     var pad: CGFloat = 11
     var snap: CGFloat?
     @ViewBuilder var content: () -> Content
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+    @ViewBuilder var body: some View {
+        let core = ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(alignment: .top, spacing: gap) { content() }
                 .padding(.horizontal, pad)
                 .scrollTargetLayout()
         }
-        .scrollTargetBehavior(.viewAligned)
-        .frame(height: height)
-        .padding(.top, 6)
+        if snap != nil { core.scrollTargetBehavior(.viewAligned).frame(height: height).padding(.top, 6) }
+        else { core.frame(height: height).padding(.top, 6) }
     }
 }
 

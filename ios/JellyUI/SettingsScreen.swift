@@ -207,7 +207,7 @@ struct SettingsScreen: View {
         } message: { Text("Enter the code shown on the other device.") }
         .alert("Sign out?", isPresented: $signOutAsk) {
             Button("Cancel", role: .cancel) {}
-            Button("Sign out", role: .destructive) { PlayerModel.shared.stop(); Task { _ = try? await Api.request("/Sessions/Logout", method: "POST", quiet: true) }; session.signOut() }
+            Button("Sign out", role: .destructive) { PlayerModel.shared.stop(); Task { _ = try? await Api.request("/Sessions/Logout", method: "POST", quiet: true); await MainActor.run { session.signOut() } } }
         }
         .alert("Delete the saved songs?", isPresented: $clearAsk) {
             Button("Cancel", role: .cancel) {}

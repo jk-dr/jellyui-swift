@@ -101,7 +101,7 @@ struct HomeScreen: View {
 
                 if settings.homeContinue, !resume.isEmpty {
                     H2("Continue Watching")
-                    HRow(height: cw * 0.5625 + 12, pad: 16) { ForEach(resume) { ContinueCard(it: $0, width: cw) } }
+                    HRow(height: cw * 0.5625 + 12, pad: 16, snap: cw) { ForEach(resume) { ContinueCard(it: $0, width: cw) } }
                 }
 
                 if settings.homeTrending, h?.ready == true, let secs = h?.sections {
@@ -127,10 +127,14 @@ struct HomeScreen: View {
                 }
             }
         }
-        .task { await load(force: false) }
+        .task { if !loaded || Date().timeIntervalSince(HomeScreen.lastLoad) > 60 { await load(force: false) } }
+        .onChange(of: nav.play) { _, n in if n == nil { Task { await load(force: true) } } }
     }
 
+    static var lastLoad = Date.distantPast
+
     private func load(force: Bool) async {
+        HomeScreen.lastLoad = Date()
         if force { Mem.clear() }
         async let v = try? Api.views()
         async let hm = Plugin.home()

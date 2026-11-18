@@ -191,7 +191,7 @@ final class PlayerModel {
         } else {
             url = Api.keyed("/Audio/\(it.id)/stream", ["static": true, "deviceId": Session.shared.deviceId])
         }
-        guard let url = SongCache.shared.cached(it.id) ?? url else { return }
+        guard let url = (universal ? nil : SongCache.shared.cached(it.id)) ?? url else { return }
         SongCache.shared.precache(queue, from: index)
         let avItem = AVPlayerItem(url: url)
         if let o = endObserver { NotificationCenter.default.removeObserver(o) }
@@ -201,7 +201,10 @@ final class PlayerModel {
         statusObserver = avItem.observe(\.status, options: [.new]) { [weak self] i, _ in
             DispatchQueue.main.async {
                 guard let self else { return }
-                if i.status == .failed && !self.triedUniversal { self.load(universal: true) }
+                if i.status == .failed {
+                    SongCache.shared.drop(it.id) // a saved copy that will not play is forgotten
+                    if !self.triedUniversal { self.load(universal: true) } else { self.nextSong() }
+                }
                 if i.status != .unknown { self.loading = false }
                 if i.status == .readyToPlay {
                     let d = i.duration.seconds

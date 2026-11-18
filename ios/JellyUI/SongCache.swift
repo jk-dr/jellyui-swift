@@ -71,7 +71,23 @@ final class SongCache {
         monitor.start(queue: DispatchQueue(label: "net"))
     }
 
-    private func file(_ id: String) -> URL { dir.appendingPathComponent("\(id).audio") }
+    private var exts: [String: String] = Dictionary(uniqueKeysWithValues: (UserDefaults.standard.dictionary(forKey: "songexts") as? [String: String] ?? [:]).map { ($0.key, $0.value) })
+    private func file(_ id: String) -> URL { dir.appendingPathComponent(id + "." + (exts[id] ?? "mp3")) }
+    private static func ext(for mime: String?, url: URL?) -> String {
+        let m = (mime ?? "").lowercased()
+        if m.contains("flac") { return "flac" }
+        if m.contains("mp4") || m.contains("m4a") || m.contains("aac") { return "m4a" }
+        if m.contains("wav") { return "wav" }
+        if m.contains("ogg") || m.contains("opus") { return "ogg" }
+        return "mp3"
+    }
+    /// a copy that would not play: forget it
+    func drop(_ id: String) {
+        lock.lock(); defer { lock.unlock() }
+        try? FileManager.default.removeItem(at: file(id))
+        manifest[id] = nil
+        save()
+    }
     private func save() { if let d = try? JSONEncoder().encode(manifest) { UserDefaults.standard.set(d, forKey: "songcache") } }
 
     /// The saved copy of a song (a file address), or nil. Using it marks the song as recently used.
@@ -113,6 +129,10 @@ final class SongCache {
             guard let self else { return }
             defer { self.lock.lock(); self.busy.remove(id); self.lock.unlock() }
             guard let tmp, (resp as? HTTPURLResponse)?.statusCode == 200 else { return }
+            self.lock.lock()
+            self.exts[id] = SongCache.ext(for: (resp as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type"), url: nil)
+            UserDefaults.standard.set(self.exts, forKey: "songexts")
+            self.lock.unlock()
             let dest = self.file(id)
             try? FileManager.default.removeItem(at: dest)
             do { try FileManager.default.moveItem(at: tmp, to: dest) } catch { return }
