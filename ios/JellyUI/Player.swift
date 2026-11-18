@@ -19,6 +19,8 @@ final class PlayerModel {
     var shuffleOn = false
     @ObservationIgnored var more: (() async -> [Item])?
     @ObservationIgnored private var fetchingMore = false
+    /// set while a film is playing: the lock screen's play, pause and seek then go to it
+    @ObservationIgnored var video: AVPlayer?
 
     @ObservationIgnored private let player = AVPlayer()
     @ObservationIgnored private var timeObserver: Any?
@@ -267,13 +269,18 @@ final class PlayerModel {
         c.nextTrackCommand.isEnabled = true
         c.previousTrackCommand.isEnabled = true
         c.changePlaybackPositionCommand.isEnabled = true
-        c.playCommand.addTarget { [weak self] _ in self?.play(); return .success }
-        c.pauseCommand.addTarget { [weak self] _ in self?.pause(); return .success }
-        c.togglePlayPauseCommand.addTarget { [weak self] _ in self?.toggle(); return .success }
+        c.playCommand.addTarget { [weak self] _ in if let v = self?.video { v.play() } else { self?.play() }; return .success }
+        c.pauseCommand.addTarget { [weak self] _ in if let v = self?.video { v.pause() } else { self?.pause() }; return .success }
+        c.togglePlayPauseCommand.addTarget { [weak self] _ in
+            if let v = self?.video { if v.timeControlStatus == .paused { v.play() } else { v.pause() } } else { self?.toggle() }
+            return .success
+        }
         c.nextTrackCommand.addTarget { [weak self] _ in self?.nextSong(); return .success }
         c.previousTrackCommand.addTarget { [weak self] _ in self?.previous(); return .success }
         c.changePlaybackPositionCommand.addTarget { [weak self] e in
-            if let e = e as? MPChangePlaybackPositionCommandEvent { self?.seek(to: e.positionTime) }
+            if let e = e as? MPChangePlaybackPositionCommandEvent {
+                if let v = self?.video { v.seek(to: CMTime(seconds: e.positionTime, preferredTimescale: 600)) } else { self?.seek(to: e.positionTime) }
+            }
             return .success
         }
     }

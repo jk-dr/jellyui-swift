@@ -1,5 +1,6 @@
 import AVFoundation
 import AVKit
+import MediaPlayer
 import SwiftUI
 
 // MARK: - Orientation (video opens sideways)
@@ -260,6 +261,8 @@ struct Stage: View {
     @State private var stopped = false
     @State private var chosenFor = ""
     @State private var lastTap = (t: Date.distantPast, side: 0)
+    @State private var seekPending: Double = 0
+    @State private var infoAt: Double = -10
 
     final class Observers {
         var time: Any?
@@ -312,6 +315,7 @@ struct Stage: View {
             }
             .ignoresSafeArea()
         }
+        .persistentSystemOverlays(.hidden)
         .onAppear { setup() }
         .onDisappear { teardown() }
         .onChange(of: pb.source) { _, s in if let s { Task { await swap(to: s) } } }
@@ -326,13 +330,18 @@ struct Stage: View {
     private func setup() {
         fav = pb.favourite
         Orient.set(.landscape)
+        PlayerModel.shared.video = player
         UIApplication.shared.isIdleTimerDisabled = true
         player.allowsExternalPlayback = true
         PlayerModel.shared.pause()
         let o = observers
         o.time = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { t in
             let s = t.seconds
-            if s.isFinite { position = s; if s > 1 { lastGood = s } }
+            if s.isFinite {
+                position = s
+                if s > 1 { lastGood = s }
+                if abs(s - infoAt) >= 2 { infoAt = s; nowPlayingInfo(elapsed: s) }
+            }
             if let r = player.currentItem?.loadedTimeRanges.first?.timeRangeValue { buffered = r.start.seconds + r.duration.seconds }
         }
         o.items.append(player.observe(\.timeControlStatus, options: [.new]) { p, _ in
@@ -356,6 +365,8 @@ struct Stage: View {
         reportStop()
         if let t = observers.time { player.removeTimeObserver(t) }
         if let e = observers.end { NotificationCenter.default.removeObserver(e) }
+        PlayerModel.shared.video = nil
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         observers.status?.invalidate()
         observers.items.forEach { $0.invalidate() }
         observers.items = []
@@ -375,7 +386,15 @@ struct Stage: View {
         observers.status?.invalidate()
         observers.status = item.observe(\.status, options: [.new]) { i, _ in
             DispatchQueue.main.async {
-                if i.status == .readyToPlay { buffering = false; playErr = ""; errRetries = 0 }
+                if i.status == .readyToPlay {
+                    buffering = false; playErr = ""; errRetries = 0
+                    // a seek made before the stream was ready can be dropped: check the resume point once it is
+                    if seekPending > 1 {
+                        let want = seekPending
+                        seekPending = 0
+                        if abs(now - want) > 3 { player.seek(to: CMTime(seconds: want, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { _ in } }
+                    }
+                }
                 if i.status == .failed {
                     if errRetries < 2 && !pb.isLive {
                         errRetries += 1; swapMsg = "Reconnecting…"
@@ -388,11 +407,25 @@ struct Stage: View {
         let start = pb.startSec
         if !pb.isLive && start > 1 { await player.seek(to: CMTime(seconds: start, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) }
         position = start
+        seekPending = (!pb.isLive && start > 1) ? start : 0
+        if seekPending > 0 { showFlash("Resumed at \(formatTime(start))") }
+        nowPlayingInfo(elapsed: start)
         PlayerModel.shared.pause() // a film must not play over a song
         player.play()
         swapMsg = ""
         reported = true; stopped = false
         pb.report("Playing", position: start, paused: false)
+    }
+
+    private func nowPlayingInfo(elapsed: Double) {
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: pb.epLabel.isEmpty ? pb.title : pb.title + " · " + pb.epLabel,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsed,
+            MPNowPlayingInfoPropertyPlaybackRate: player.timeControlStatus == .paused ? 0.0 : 1.0,
+            MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.video.rawValue,
+        ]
+        if pb.duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = pb.duration }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
     private func reportStop() {
