@@ -17,7 +17,8 @@ targets:
     info:
       path: JellyUI/Info.plist
       properties:
-        CFBundleDisplayName: JellyUI
+        CFBundleDisplayName: Monarth
+        CFBundleName: Monarth
         UILaunchScreen:
           UIColorName: ""
         UIBackgroundModes: [audio]

@@ -188,7 +188,7 @@ struct SettingsScreen: View {
                 case "Photos":
                     StepperRow(label: "Slideshow delay", desc: "Time each photo stays on screen.", value: intBinding({ s.slideDelay }, { s.slideDelay = $0 }), min: 2, max: 60, step: 1, unit: "s")
                 default:
-                    InfoRow(label: "App", value: "JellyUI")
+                    InfoRow(label: "App", value: "Monarth")
                     InfoRow(label: "Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
                     InfoRow(label: "Server", value: session.server)
                     InfoRow(label: "Device", value: "This iPhone")

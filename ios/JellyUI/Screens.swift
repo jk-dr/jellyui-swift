@@ -53,7 +53,7 @@ struct LoginView: View {
                     if step == 0 {
                         Text("Connect to server").font(.q(30)).foregroundStyle(Color.pink)
                         label("Server address")
-                        field("192.168.1.10:8096 or jellyfin.example.com", $address, secure: false, f: .address)
+                        field("192.168.1.10:8096 or media.example.com", $address, secure: false, f: .address)
                             .keyboardType(.URL).submitLabel(.go).onSubmit { Task { await connect() } }
                         errorText
                         Btn(label: busy ? "Connecting…" : "Connect", kind: .primary, busy: busy) { Task { await connect() } }.frame(width: 160)

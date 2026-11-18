@@ -49,7 +49,7 @@ final class Session {
     }
 
     func authHeader(withToken: Bool = true) -> String {
-        var h = "MediaBrowser Client=\"JellyUI\", Device=\"iPhone\", DeviceId=\"\(deviceId)\", Version=\"1.0.0\""
+        var h = "MediaBrowser Client=\"Monarth\", Device=\"iPhone\", DeviceId=\"\(deviceId)\", Version=\"1.0.0\""
         if withToken, let t = token { h += ", Token=\"\(t)\"" }
         return h
     }
@@ -248,7 +248,7 @@ enum Api {
         } catch let e as ApiError {
             throw e
         } catch is DecodingError {
-            throw ApiError(status: 0, message: "That doesn't look like a Jellyfin server.")
+            throw ApiError(status: 0, message: "That doesn't look like a compatible server.")
         } catch {
             throw ApiError(status: 0, message: "Can't reach that address. Check it and that you're on the right network.")
         }

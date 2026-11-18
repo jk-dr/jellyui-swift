@@ -342,7 +342,7 @@ final class VideoModel {
 
     private func iosProfile(_ maxBitrate: Int, burn: Bool) -> [String: Any] {
         [
-            "Name": "JellyUI iOS", "MaxStreamingBitrate": maxBitrate, "MaxStaticBitrate": maxBitrate,
+            "Name": "Monarth iOS", "MaxStreamingBitrate": maxBitrate, "MaxStaticBitrate": maxBitrate,
             "DirectPlayProfiles": [["Container": "mp4,m4v,mov", "Type": "Video", "VideoCodec": "h264,hevc", "AudioCodec": "aac,mp3,ac3,eac3,alac,flac"]],
             "TranscodingProfiles": [["Container": "mp4", "Type": "Video", "AudioCodec": "aac,mp3,ac3,eac3", "VideoCodec": "h264,hevc", "Context": "Streaming", "Protocol": "hls", "MaxAudioChannels": "6", "MinSegments": 2, "BreakOnNonKeyFrames": true]],
             "ContainerProfiles": [],
