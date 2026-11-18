@@ -120,13 +120,13 @@ struct RootView: View {
     var body: some View {
         @Bindable var p = player
         TabView {
-            NavigationStack { HomeView() }.tabItem { Label("Home", systemImage: "house.fill") }
-            NavigationStack { MusicView() }.tabItem { Label("Music", systemImage: "music.note") }
-            NavigationStack { SearchView() }.tabItem { Label("Search", systemImage: "magnifyingglass") }
+            NavigationStack { HomeView().navigationDestination(for: Item.self) { DetailRouter(item: $0) } }.tabItem { Label("Home", systemImage: "house.fill") }
+            NavigationStack { MusicView().navigationDestination(for: Item.self) { DetailRouter(item: $0) } }.tabItem { Label("Music", systemImage: "music.note") }
+            NavigationStack { SearchView().navigationDestination(for: Item.self) { DetailRouter(item: $0) } }.tabItem { Label("Search", systemImage: "magnifyingglass") }
             NavigationStack { SettingsView() }.tabItem { Label("Settings", systemImage: "gearshape.fill") }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            MiniPlayer().padding(.bottom, 49) // sits above the tab bar
+            MiniPlayer()
         }
         .sheet(isPresented: $p.showFull) {
             FullPlayer().presentationBackground(.black).presentationDragIndicator(.hidden)
@@ -180,7 +180,7 @@ struct Shelf: View {
 
 private extension View {
     func page() -> some View {
-        self.background(Theme.bg.ignoresSafeArea()).navigationDestination(for: Item.self) { DetailRouter(item: $0) }
+        self.background(Theme.bg.ignoresSafeArea())
     }
 }
 
@@ -189,6 +189,8 @@ struct DetailRouter: View {
     var body: some View {
         switch item.type {
         case "MusicAlbum", "Playlist": SongListView(item: item)
+        case "Audio": SongListView(item: Item(id: item.albumId ?? item.id, name: item.album, type: "MusicAlbum", albumArtist: item.albumArtist))
+        case "MusicArtist": LibraryView(item: item, artist: true)
         case "Series": SeriesView(item: item)
         case "CollectionFolder", "UserView", "Folder", "BoxSet": LibraryView(item: item)
         default: MovieView(item: item)
@@ -200,6 +202,7 @@ struct DetailRouter: View {
 
 struct LibraryView: View {
     let item: Item
+    var artist = false
     @State private var items: [Item] = []
     var body: some View {
         ScrollView {
@@ -210,7 +213,13 @@ struct LibraryView: View {
         }
         .navigationTitle(item.title)
         .page()
-        .task { items = (try? await Api.items(["ParentId": item.id, "SortBy": "SortName", "Limit": 500, "EnableImageTypes": "Primary", "ImageTypeLimit": 1])) ?? [] }
+        .task {
+            if artist {
+                items = (try? await Api.items(["ArtistIds": item.id, "IncludeItemTypes": "MusicAlbum", "Recursive": true, "SortBy": "ProductionYear,SortName", "Limit": 500])) ?? []
+            } else {
+                items = (try? await Api.items(["ParentId": item.id, "SortBy": "SortName", "Limit": 500, "EnableImageTypes": "Primary", "ImageTypeLimit": 1])) ?? []
+            }
+        }
     }
 }
 
@@ -349,16 +358,22 @@ struct SongListView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .page()
-        .task { songs = (item.type == "Playlist" ? try? await Api.playlistSongs(item.id) : try? await Api.albumSongs(item.id)) ?? [] }
+        .task {
+            if item.type == "Playlist" { songs = (try? await Api.playlistSongs(item.id)) ?? [] } else { songs = (try? await Api.albumSongs(item.id)) ?? [] }
+        }
     }
 }
 
 // MARK: - Movies and shows
 
 struct VideoPlayerView: View {
-    let url: URL
+    @State private var player: AVPlayer
+    init(url: URL) { _player = State(initialValue: AVPlayer(url: url)) }
     var body: some View {
-        VideoPlayer(player: AVPlayer(url: url)).ignoresSafeArea()
+        VideoPlayer(player: player)
+            .ignoresSafeArea()
+            .onAppear { PlayerModel.shared.pause(); player.play() }
+            .onDisappear { player.pause() }
     }
 }
 

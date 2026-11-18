@@ -169,7 +169,7 @@ struct LyricsView: View {
                     let isActive = synced && i == idx
                     let upcoming = synced && i > idx && i <= idx + 2 && (l.t ?? 1e9) - t < 2.5
                     LyricRow(
-                        line: l, size: 32, active: isActive || !synced,
+                        line: l, size: 30, active: isActive || !synced,
                         level: !synced ? 0.9 : (isActive ? 1 : (upcoming ? 0.3 : 0.15)),
                         t: isActive ? t : 0,
                         onTap: { if let lt = l.t { player.seek(to: max(0, lt - 0.05)) } }

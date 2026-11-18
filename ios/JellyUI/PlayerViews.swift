@@ -36,7 +36,7 @@ struct MiniPlayer: View {
             }
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .padding(.horizontal, 8)
-            .padding(.bottom, 6)
+            .padding(.bottom, 6 + 49) // above the tab bar
             .contentShape(Rectangle())
             .onTapGesture { player.showFull = true }
         }
@@ -80,7 +80,12 @@ struct FullPlayer: View {
         if let c = await LyricsStore.shared.cached(it.id) { lines = c; loading = false; return }
         lines = []
         loading = true
-        let r = await LyricsStore.shared.load(it)
+        var r = await LyricsStore.shared.load(it)
+        if r == nil {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            if Task.isCancelled { return }
+            r = await LyricsStore.shared.load(it)
+        }
         guard it.id == player.current?.id else { return }
         lines = r ?? []
         loading = false

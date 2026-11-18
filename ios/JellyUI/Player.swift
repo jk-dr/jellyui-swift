@@ -134,7 +134,8 @@ final class PlayerModel {
         ud.isFavorite = on
         it.userData = ud
         queue[index] = it
-        Task { await Api.setFavourite(it.id, on) }
+        let id = it.id
+        Task { await Api.setFavourite(id, on) }
     }
 
     // MARK: loading
@@ -190,7 +191,7 @@ final class PlayerModel {
     // MARK: lock screen
 
     private func setNowPlaying(_ it: Item) {
-        var info: [String: Any] = [
+        let info: [String: Any] = [
             MPMediaItemPropertyTitle: it.title,
             MPMediaItemPropertyArtist: it.artistLine,
             MPMediaItemPropertyAlbumTitle: it.album ?? "",
@@ -202,8 +203,9 @@ final class PlayerModel {
         artworkTask?.cancel()
         artworkTask = Task {
             guard let u = Pic.square(it, 600), let img = await ImageStore.shared.load(u), !Task.isCancelled else { return }
-            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: img.size) { _ in img }
-            await MainActor.run { MPNowPlayingInfoCenter.default().nowPlayingInfo = info }
+            var out = info
+            out[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: img.size) { _ in img }
+            await MainActor.run { MPNowPlayingInfoCenter.default().nowPlayingInfo = out }
         }
     }
 
@@ -216,6 +218,9 @@ final class PlayerModel {
 
     private func setupRemote() {
         let c = MPRemoteCommandCenter.shared()
+        c.nextTrackCommand.isEnabled = true
+        c.previousTrackCommand.isEnabled = true
+        c.changePlaybackPositionCommand.isEnabled = true
         c.playCommand.addTarget { [weak self] _ in self?.play(); return .success }
         c.pauseCommand.addTarget { [weak self] _ in self?.pause(); return .success }
         c.togglePlayPauseCommand.addTarget { [weak self] _ in self?.toggle(); return .success }

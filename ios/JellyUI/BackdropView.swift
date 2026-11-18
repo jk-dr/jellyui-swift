@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 
 /// The cover shrunk to 6x6 colours (36 cells of r, g, b), the form the shader reads.
+@MainActor
 enum CoverColours {
     private static var cache: [URL: [Float]] = [:]
     static let fallback: [Float] = Array(repeating: 0.2, count: 108)
@@ -17,7 +18,6 @@ enum CoverColours {
             guard let ctx = CGContext(data: buf.baseAddress, width: n, height: n, bitsPerComponent: 8, bytesPerRow: n * 4,
                                       space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
             ctx.interpolationQuality = .high
-            // drawn upside down on purpose: the shader's rows run from the bottom (as the web's did)
             ctx.draw(cg, in: CGRect(x: 0, y: 0, width: n, height: n))
             return true
         }
@@ -45,7 +45,7 @@ struct BackdropView: View {
     @State private var shownCover: URL?
     @State private var clock = Clock()
 
-    private let divisor: CGFloat = 6
+    private let divisor: CGFloat = 10
     private let fade = 0.9
 
     /// the colour clock: only moves while a song plays, at 35 % of the web's speed
@@ -72,14 +72,14 @@ struct BackdropView: View {
                     .fill(Color.black)
                     .frame(width: w, height: h)
                     .colorEffect(ShaderLibrary.fluid(.float2(w, h), .float(clock.step(tl.date, running: playing)), .float(m), .floatArray(a), .floatArray(b)))
-                    .blur(radius: 1.5, opaque: true)
+                    .blur(radius: 1.2, opaque: true)
                     .scaleEffect(divisor)
                     .frame(width: geo.size.width, height: geo.size.height)
                     .clipped()
             }
         }
         .ignoresSafeArea()
-        .opacity(playing ? 1 : 0.35)
+        .opacity(playing ? 1 : 0.2)
         .animation(.easeInOut(duration: 0.9), value: playing)
         .task(id: cover) { await change() }
     }

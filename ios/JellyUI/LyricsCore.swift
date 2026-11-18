@@ -166,8 +166,10 @@ actor LyricsStore {
     private var done: [String: [LyricLine]] = [:]
     private var none: [String: Date] = [:]
     private var running: [String: Task<[LyricLine]?, Never>] = [:]
+    private var failures: [String: Bool] = [:]
 
     func cached(_ id: String) -> [LyricLine]? { done[id] }
+    func markFailed(_ id: String) { failures[id] = true }
 
     func load(_ it: Item) async -> [LyricLine]? {
         if let c = done[it.id] { return c }
@@ -177,7 +179,13 @@ actor LyricsStore {
         running[it.id] = t
         let r = await t.value
         running[it.id] = nil
-        if let r { done[it.id] = r; if done.count > 40, let k = done.keys.first { done[k] = nil } } else { none[it.id] = Date() }
+        if let r {
+            done[it.id] = r
+            if done.count > 40, let k = done.keys.first { done[k] = nil }
+        } else if failures[it.id] != true {
+            none[it.id] = Date() // a clean "no lyrics" answer is remembered; a failed request is not
+        }
+        failures[it.id] = nil
         return r
     }
 
@@ -185,14 +193,23 @@ actor LyricsStore {
         let duration = it.seconds
         // the word-timed file first, then Jellyfin's own
         struct Resp: Decodable { var blocked: Bool?; var lines: [Lyr.TtmlLine]? }
-        if let r: Resp = try? await Api.get("/JellyUI/Ttml/\(it.id)", ["t": Int(Date().timeIntervalSince1970 * 1000)], quiet: true) {
+        var failed = false
+        do {
+            let r: Resp = try await Api.get("/JellyUI/Ttml/\(it.id)", ["t": Int(Date().timeIntervalSince1970 * 1000)], quiet: true)
             if r.blocked == true { return nil }
             if let ls = r.lines, !ls.isEmpty { return Lyr.prep(Lyr.fromTtml(ls), duration: duration) }
-        }
-        if let d = try? await Api.request("/Audio/\(it.id)/Lyrics", quiet: true), let j = try? JSONSerialization.jsonObject(with: d) {
-            let ls = Lyr.fromJellyfin(j)
-            if !ls.isEmpty { return Lyr.prep(ls, duration: duration) }
-        }
+        } catch let e as ApiError where e.status == 404 {
+            // no plugin: that is an answer, not a failure
+        } catch { failed = true }
+        do {
+            let d = try await Api.request("/Audio/\(it.id)/Lyrics", quiet: true)
+            if let j = try? JSONSerialization.jsonObject(with: d) {
+                let ls = Lyr.fromJellyfin(j)
+                if !ls.isEmpty { return Lyr.prep(ls, duration: duration) }
+            }
+        } catch let e as ApiError where e.status == 404 {
+        } catch { failed = true }
+        if failed { await LyricsStore.shared.markFailed(it.id) }
         return nil
     }
 }

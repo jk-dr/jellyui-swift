@@ -107,6 +107,8 @@ struct Item: Codable, Identifiable, Hashable {
     var userData: UserData?
     var parentBackdropItemId: String?
     var parentBackdropImageTags: [String]?
+    var primaryImageTag: String?
+    var itemId: String?
 
     var seconds: Double { Double(runTimeTicks ?? 0) / 10_000_000 }
     var title: String { name ?? "" }
@@ -150,7 +152,7 @@ struct ApiError: LocalizedError {
 }
 
 enum Api {
-    private static let session: URLSession = {
+    static let session: URLSession = {
         let c = URLSessionConfiguration.default
         c.urlCache = URLCache(memoryCapacity: 50_000_000, diskCapacity: 400_000_000)
         c.requestCachePolicy = .useProtocolCachePolicy
@@ -163,7 +165,7 @@ enum Api {
         var list = c.queryItems ?? []
         for k in query.keys.sorted() {
             guard let v = query[k] ?? nil else { continue }
-            let text = "(v)"
+            let text = "\(v)"
             if text.isEmpty { continue }
             list.append(URLQueryItem(name: k, value: text))
         }
@@ -306,7 +308,8 @@ enum Api {
 
     struct ItemList: Decodable { var items: [Item]? }
     static func recentAlbums() async -> [Item] {
-        ((try? await get("/JellyUI/RecentAlbums", ["limit": 40], quiet: true) as ItemList)?.items) ?? []
+        if let r = (try? await get("/JellyUI/RecentAlbums", ["limit": 40], quiet: true) as ItemList)?.items, !r.isEmpty { return r }
+        return (try? await items(["IncludeItemTypes": "MusicAlbum", "Recursive": true, "SortBy": "DateCreated", "SortOrder": "Descending", "Limit": 40])) ?? []
     }
     static func favouriteSongs() async -> [Item] {
         ((try? await get("/JellyUI/Favourites", quiet: true) as ItemList)?.items) ?? []
@@ -332,6 +335,7 @@ enum Pic {
     static func poster(_ it: Item, h: Int = 450) -> URL? {
         if it.type == "Audio", let a = it.albumId { return img(a, "Primary", h: h, tag: it.albumPrimaryImageTag) }
         if let t = it.imageTags?["primary"] { return img(it.id, "Primary", h: h, tag: t) }
+        if let t = it.primaryImageTag { return img(it.itemId ?? it.id, "Primary", h: h, tag: t) }
         if let s = it.seriesId, let t = it.seriesPrimaryImageTag { return img(s, "Primary", h: h, tag: t) }
         if let a = it.albumId, let t = it.albumPrimaryImageTag { return img(a, "Primary", h: h, tag: t) }
         if it.type == "Audio" { return img(it.albumId ?? it.id, "Primary", h: h, tag: nil) }
@@ -365,20 +369,31 @@ final class ImageStore {
 
     func load(_ url: URL) async -> UIImage? {
         if let i = cached(url) { return i }
+        let t = task(for: url)
+        let out = await t.value
+        finish(url)
+        return out
+    }
+
+    private func task(for url: URL) -> Task<UIImage?, Never> {
         lock.lock()
-        if let t = loading[url] { lock.unlock(); return await t.value }
+        defer { lock.unlock() }
+        if let t = loading[url] { return t }
         let t = Task<UIImage?, Never> {
             var r = URLRequest(url: url)
             r.cachePolicy = .returnCacheDataElseLoad
-            guard let (d, _) = try? await URLSession.shared.data(for: r), let i = UIImage(data: d) else { return nil }
+            guard let (d, _) = try? await Api.session.data(for: r), let i = UIImage(data: d) else { return nil }
             self.mem.setObject(i, forKey: url as NSURL)
             return i
         }
         loading[url] = t
+        return t
+    }
+
+    private func finish(_ url: URL) {
+        lock.lock()
+        loading[url] = nil
         lock.unlock()
-        let out = await t.value
-        lock.lock(); loading[url] = nil; lock.unlock()
-        return out
     }
 }
 
