@@ -155,7 +155,7 @@ enum Api {
         c.urlCache = URLCache(memoryCapacity: 50_000_000, diskCapacity: 400_000_000)
         c.requestCachePolicy = .useProtocolCachePolicy
         c.timeoutIntervalForRequest = 30
-        return c
+        return URLSession(configuration: c)
     }()
 
     static func url(_ path: String, _ query: [String: Any?] = [:]) -> URL? {
