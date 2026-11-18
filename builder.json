@@ -1,0 +1,12 @@
+{
+  "project": "jellyui-swift",
+  "platform": "ios",
+  "github": { "owner": "jk-dr", "repo": "jellyui-swift" },
+  "provider": "github",
+  "codemagic": {},
+  "ios": { "path": "ios", "scheme": "JellyUI", "bundleId": "app.jellyui.swift", "configuration": "Release" },
+  "flutter": { "watch": {} },
+  "reactNative": {},
+  "kmp": {},
+  "mobai": {}
+}
