@@ -76,7 +76,19 @@ struct UserData: Codable, Hashable {
     var played: Bool?
     var playbackPositionTicks: Int64?
     var playedPercentage: Double?
+    var lastPlayedDate: String?
 }
+
+struct Person: Codable, Hashable {
+    var id: String
+    var name: String?
+    var role: String?
+    var type: String?
+    var primaryImageTag: String?
+}
+
+struct Trailer: Codable, Hashable { var url: String? }
+struct SourceStub: Codable, Hashable { var id: String? }
 
 struct Item: Codable, Identifiable, Hashable {
     var id: String
@@ -109,6 +121,16 @@ struct Item: Codable, Identifiable, Hashable {
     var parentBackdropImageTags: [String]?
     var primaryImageTag: String?
     var itemId: String?
+    var people: [Person]?
+    var providerIds: [String: String]?
+    var canDelete: Bool?
+    var remoteTrailers: [Trailer]?
+    var mediaSources: [SourceStub]?
+    var number: String?
+    var primaryImageAspectRatio: Double?
+    var currentProgram: Program?
+    var premiereDate: String?
+    var dateCreated: String?
 
     var seconds: Double { Double(runTimeTicks ?? 0) / 10_000_000 }
     var title: String { name ?? "" }
@@ -117,6 +139,12 @@ struct Item: Codable, Identifiable, Hashable {
         if let a = artists, !a.isEmpty { return a.joined(separator: ", ") }
         return albumArtist ?? ""
     }
+}
+
+struct Program: Codable, Hashable {
+    var name: String?
+    var startDate: String?
+    var endDate: String?
 }
 
 struct ItemsResult: Codable {
@@ -248,6 +276,7 @@ enum Api {
             s.server = base
             s.userId = uid
             s.userName = user["Name"] as? String ?? name
+            UserDefaults.standard.set(((user["Policy"] as? [String: Any])?["IsAdministrator"] as? Bool) ?? false, forKey: "admin")
             s.token = tok
         }
     }
@@ -382,6 +411,7 @@ final class ImageStore {
         let t = Task<UIImage?, Never> {
             var r = URLRequest(url: url)
             r.cachePolicy = .returnCacheDataElseLoad
+            r.setValue(Session.shared.authHeader(), forHTTPHeaderField: "Authorization")
             guard let (d, _) = try? await Api.session.data(for: r), let i = UIImage(data: d) else { return nil }
             self.mem.setObject(i, forKey: url as NSURL)
             return i
@@ -400,11 +430,13 @@ final class ImageStore {
 struct Pic_: View {
     let url: URL?
     var radius: CGFloat = 8
+    var fit: ContentMode = .fill
     @State private var image: UIImage?
 
-    init(_ url: URL?, radius: CGFloat = 8) {
+    init(_ url: URL?, radius: CGFloat = 8, fit: ContentMode = .fill) {
         self.url = url
         self.radius = radius
+        self.fit = fit
         _image = State(initialValue: url.flatMap { ImageStore.shared.cached($0) })
     }
 
@@ -412,7 +444,7 @@ struct Pic_: View {
         ZStack {
             Theme.surface
             if let image {
-                Image(uiImage: image).resizable().scaledToFill().transition(.opacity)
+                Image(uiImage: image).resizable().aspectRatio(contentMode: fit).transition(.opacity)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))

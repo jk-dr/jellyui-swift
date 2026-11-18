@@ -14,6 +14,11 @@ final class PlayerModel {
     var position: Double = 0 // updated about twice a second, for bars and labels
     var duration: Double = 0
     var showFull = false
+    var loading = false
+    var repeatMode = "off" // off, all, one
+    var shuffleOn = false
+    @ObservationIgnored var more: (() async -> [Item])?
+    @ObservationIgnored private var fetchingMore = false
 
     @ObservationIgnored private let player = AVPlayer()
     @ObservationIgnored private var timeObserver: Any?
@@ -55,17 +60,50 @@ final class PlayerModel {
 
     // MARK: queue
 
-    func play(_ songs: [Item], at start: Int = 0) {
+    func play(_ songs: [Item], at start: Int = 0, more: (() async -> [Item])? = nil, shuffle: Bool = false) {
         guard !songs.isEmpty else { return }
         report("Stopped")
+        self.more = more
+        shuffleOn = shuffle
         queue = songs
         index = max(0, min(start, songs.count - 1))
         load()
     }
 
-    func shuffle(_ songs: [Item]) {
-        play(songs.shuffled(), at: 0)
+    /// A shuffled queue that keeps topping itself up with fresh songs as it runs low.
+    func shuffle(_ songs: [Item], more: (() async -> [Item])? = nil) {
+        play(songs.shuffled(), at: 0, more: more, shuffle: true)
     }
+
+    func toggleShuffle() {
+        shuffleOn.toggle()
+        if shuffleOn { shuffleUpcoming() }
+    }
+
+    /// Shuffle the songs still to come (the one playing and those already played stay where they are).
+    func shuffleUpcoming() {
+        guard index + 1 < queue.count else { return }
+        let head = Array(queue[0...index])
+        queue = head + Array(queue[(index + 1)...]).shuffled()
+    }
+
+    func cycleRepeat() { repeatMode = repeatMode == "off" ? "all" : (repeatMode == "all" ? "one" : "off") }
+
+    private func topUp() {
+        guard let more, !fetchingMore else { return }
+        fetchingMore = true
+        Task {
+            let got = await more()
+            await MainActor.run {
+                let have = Set(queue.map { $0.id })
+                let fresh = got.filter { !have.contains($0.id) }
+                if !fresh.isEmpty { queue.append(contentsOf: fresh) }
+                fetchingMore = false
+            }
+        }
+    }
+
+    func moreQueue() { topUp() }
 
     func jump(to i: Int) {
         guard queue.indices.contains(i) else { return }
@@ -73,6 +111,9 @@ final class PlayerModel {
         index = i
         load()
     }
+
+    func enqueueNext(_ s: Item) { playNext(s) }
+    func enqueueLast(_ s: Item) { addToQueue([s]) }
 
     func addToQueue(_ songs: [Item]) {
         if queue.isEmpty { play(songs) } else { queue.append(contentsOf: songs) }
@@ -95,8 +136,12 @@ final class PlayerModel {
         index = 0
     }
 
-    func nextSong() {
-        if index + 1 < queue.count { jump(to: index + 1) } else { stop() }
+    func nextSong(auto: Bool = false) {
+        if auto && repeatMode == "one" { seek(to: 0); player.play(); return }
+        if index + 1 < queue.count { jump(to: index + 1) }
+        else if repeatMode == "all" && !queue.isEmpty { jump(to: 0) }
+        else if auto { player.pause(); isPlaying = false; seek(to: 0) }
+        else { stop() }
     }
 
     func previous() {
@@ -128,14 +173,8 @@ final class PlayerModel {
     }
 
     func toggleFavourite() {
-        guard var it = current else { return }
-        let on = !it.isFavourite
-        var ud = it.userData ?? UserData()
-        ud.isFavorite = on
-        it.userData = ud
-        queue[index] = it
-        let id = it.id
-        Task { await Api.setFavourite(id, on) }
+        guard let it = current else { return }
+        Favs.toggle(it)
     }
 
     // MARK: loading
@@ -152,16 +191,18 @@ final class PlayerModel {
         } else {
             url = Api.keyed("/Audio/\(it.id)/stream", ["static": true, "deviceId": Session.shared.deviceId])
         }
-        guard let url else { return }
+        guard let url = SongCache.shared.cached(it.id) ?? url else { return }
+        SongCache.shared.precache(queue, from: index)
         let avItem = AVPlayerItem(url: url)
         if let o = endObserver { NotificationCenter.default.removeObserver(o) }
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: avItem, queue: .main) { [weak self] _ in
-            self?.nextSong()
+            self?.nextSong(auto: true)
         }
         statusObserver = avItem.observe(\.status, options: [.new]) { [weak self] i, _ in
             DispatchQueue.main.async {
                 guard let self else { return }
                 if i.status == .failed && !self.triedUniversal { self.load(universal: true) }
+                if i.status != .unknown { self.loading = false }
                 if i.status == .readyToPlay {
                     let d = i.duration.seconds
                     if d.isFinite && d > 0 { self.duration = d }
@@ -170,6 +211,8 @@ final class PlayerModel {
         }
         duration = it.seconds
         position = 0
+        loading = true
+        if more != nil && queue.count - index <= 5 { topUp() }
         player.replaceCurrentItem(with: avItem)
         player.play()
         report("Playing")
@@ -229,6 +272,23 @@ final class PlayerModel {
         c.changePlaybackPositionCommand.addTarget { [weak self] e in
             if let e = e as? MPChangePlaybackPositionCommandEvent { self?.seek(to: e.positionTime) }
             return .success
+        }
+    }
+}
+
+/// What the person has just (un)favourited, by item id (lists show items fetched earlier, so their own flag goes stale).
+@Observable
+final class Favs {
+    static let shared = Favs()
+    var map: [String: Bool] = [:]
+
+    static func isFav(_ it: Item) -> Bool { shared.map[it.id] ?? it.isFavourite }
+    static func set(_ id: String, _ on: Bool) { shared.map[id] = on }
+    static func toggle(_ it: Item) {
+        let was = isFav(it)
+        set(it.id, !was)
+        Task {
+            await Api.setFavourite(it.id, !was)
         }
     }
 }

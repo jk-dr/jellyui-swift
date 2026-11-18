@@ -1,0 +1,323 @@
+import SwiftUI
+
+// MARK: - Search
+
+private struct SearchResults {
+    var movies: [Item] = [], shows: [Item] = [], albums: [Item] = [], songs: [Item] = [], playlists: [Item] = []
+    var total: Int { movies.count + shows.count + albums.count + songs.count + playlists.count }
+}
+
+/// The web's search: the pill stays where the header's was and narrows to make room for Cancel; the results fade in.
+struct SearchScreen: View {
+    @Environment(Nav.self) private var nav
+    @Environment(PlayerModel.self) private var pm
+    @State private var q = ""
+    @State private var res = SearchResults()
+    @State private var loading = false
+    @State private var error = ""
+    @State private var dym = ""
+    @State private var recent: [String] = UserDefaults.standard.stringArray(forKey: "recentSearches") ?? []
+    @State private var open: CGFloat = 0
+    @FocusState private var focused: Bool
+
+    private var term: String { q.trimmingCharacters(in: .whitespaces) }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            Color.bg.opacity(Double(open)).ignoresSafeArea()
+            VStack(spacing: 0) {
+                HStack(spacing: 0) {
+                    ZStack {
+                        SVGPath(d: "M24 14a10 10 0 11-20 0 10 10 0 0120 0z M22 22l7 7", box: 32)
+                            .stroke(Color(hex: 0x3e2222), style: StrokeStyle(lineWidth: 2.6, lineCap: .round)).frame(width: 22, height: 22)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 13)
+                        TextField("", text: $q, prompt: Text("What do you want to watch?").foregroundStyle(Color(hex: 0x8a5a5a)))
+                            .font(.q(16)).foregroundStyle(Color.pink).multilineTextAlignment(.center)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.search)
+                            .focused($focused).padding(.horizontal, 44)
+                            .onSubmit { remember(); focused = false }
+                    }
+                    .frame(height: 48)
+                    .background(Color(hex: 0x1a1a1c), in: Capsule())
+                    .overlay(Capsule().stroke(Color(hex: 0x2a2a2d), lineWidth: 1))
+                    .padding(.trailing, open * 68)
+                }
+                .overlay(alignment: .trailing) {
+                    Button { cancel() } label: { Text("Cancel").font(.q(15)).foregroundStyle(Color.pink).frame(width: 56, height: 48, alignment: .trailing) }
+                        .buttonStyle(.plain).opacity(Double(open)).offset(x: (1 - open) * 28)
+                }
+                .padding(.horizontal, 16).padding(.top, 10 + Insets.top).padding(.bottom, 12)
+
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 0) { results }
+                        .padding(.vertical, 8).padding(.horizontal, 6)
+                        .background(Color(hex: 0x121214), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .padding(.horizontal, 8)
+                    Color.clear.frame(height: 120)
+                }
+                .scrollDismissesKeyboard(.immediately)
+                .opacity(Double(open))
+            }
+        }
+        .task(id: q) { await runSearch() }
+        .onAppear {
+            withAnimation(.timingCurve(0.22, 0.61, 0.36, 1, duration: 0.38)) { open = 1 }
+            focused = true
+        }
+    }
+
+    @ViewBuilder private var results: some View {
+        if term.isEmpty {
+            if recent.isEmpty { Text("Search your library").font(.q(15)).foregroundStyle(Color.dimText).frame(maxWidth: .infinity).padding(12) }
+            else {
+                h3("Recent searches")
+                ForEach(recent, id: \.self) { r in
+                    HStack(spacing: 12) {
+                        Icon(name: "search", size: 18, color: Color.dimText).frame(width: 38, height: 38).background(Color.surfaceHi, in: RoundedRectangle(cornerRadius: 8))
+                        Text(r).font(.q(16)).foregroundStyle(Color(hex: 0xd4d4d4)).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                        Button { recent.removeAll { $0 == r }; UserDefaults.standard.set(recent, forKey: "recentSearches") } label: { Icon(name: "close", size: 18, color: Color.dimText).padding(10) }.buttonStyle(.plain)
+                    }
+                    .padding(.vertical, 6).padding(.horizontal, 8).contentShape(Rectangle())
+                    .onTapGesture { q = r }
+                }
+            }
+        } else {
+            if loading && res.total == 0 { ProgressView().tint(Color.dimText).frame(maxWidth: .infinity).padding(24) }
+            if !error.isEmpty { Text(error).font(.q(15)).foregroundStyle(Color.danger).frame(maxWidth: .infinity).padding(12) }
+            if !loading && res.total == 0 && error.isEmpty {
+                Text("Nothing for “\(term)”").font(.q(15)).foregroundStyle(Color.dimText).frame(maxWidth: .infinity).padding(12)
+                if !dym.isEmpty {
+                    Button { q = dym } label: { (Text("Did you mean ").foregroundStyle(Color.dimText) + Text(dym).foregroundStyle(Color.pink) + Text("?").foregroundStyle(Color.dimText)).font(.q(15)).frame(maxWidth: .infinity) }.buttonStyle(.plain)
+                }
+            }
+            group("Movies", res.movies) { m in row(m, "Movie" + yr(m)) { go(.movie(m.id)) } }
+            group("TV Shows", res.shows) { m in row(m, "Show" + yr(m)) { go(.show(m.id)) } }
+            group("Albums", res.albums) { m in row(m, m.albumArtist ?? "Album") { go(.album(m.id)) } }
+            group("Playlists", res.playlists) { m in row(m, "Playlist") { go(.playlist(m.id)) } }
+            if !res.songs.isEmpty {
+                h3("Songs")
+                ForEach(Array(res.songs.enumerated()), id: \.element.id) { i, s in
+                    row(s, s.artistLine.isEmpty ? "Song" : s.artistLine) { remember(); pm.play(res.songs, at: i) }
+                }
+            }
+        }
+    }
+
+    private func yr(_ it: Item) -> String { it.productionYear.map { " · \($0)" } ?? "" }
+    private func h3(_ t: String) -> some View {
+        Text(t.uppercased()).font(.q(11)).tracking(1.54).foregroundStyle(Color.dimText).padding(.top, 8).padding(.horizontal, 10).padding(.bottom, 4)
+    }
+    @ViewBuilder private func group<V: View>(_ title: String, _ items: [Item], _ build: @escaping (Item) -> V) -> some View {
+        if !items.isEmpty { h3(title); ForEach(items) { build($0) } }
+    }
+
+    /// one prediction row: a small picture, the name with what was typed picked out, and a line under it
+    private func row(_ it: Item, _ sub: String, _ tap: @escaping () -> Void) -> some View {
+        Button { remember(); tap() } label: {
+            HStack(spacing: 12) {
+                Group {
+                    if let u = Pic.poster(it, h: 100) { Pic_(u, radius: 8) } else { Color.surfaceHi.overlay(Text(String(it.title.prefix(1))).font(.q(16)).foregroundStyle(Color.pink)) }
+                }.frame(width: 38, height: 38).clipShape(RoundedRectangle(cornerRadius: 8))
+                VStack(alignment: .leading, spacing: 0) {
+                    mark(it.title)
+                    Text(sub).font(.q(12)).foregroundStyle(Color.dimText).lineLimit(1)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.vertical, 6).padding(.horizontal, 8).contentShape(Rectangle())
+        }.buttonStyle(PressStyle())
+    }
+
+    @ViewBuilder private func mark(_ name: String) -> some View {
+        if !term.isEmpty, let r = name.range(of: term, options: .caseInsensitive) {
+            (Text(String(name[..<r.lowerBound])).foregroundStyle(Color(hex: 0xd4d4d4)) + Text(String(name[r])).foregroundStyle(Color.pink) + Text(String(name[r.upperBound...])).foregroundStyle(Color(hex: 0xd4d4d4))).font(.q(16)).lineLimit(1)
+        } else {
+            Text(name).font(.q(16)).foregroundStyle(Color(hex: 0xd4d4d4)).lineLimit(1)
+        }
+    }
+
+    private func go(_ r: Route) { close { nav.go(r) } }
+
+    private func cancel() {
+        focused = false
+        close {}
+    }
+
+    private func close(_ then: @escaping () -> Void) {
+        withAnimation(.timingCurve(0.22, 0.61, 0.36, 1, duration: 0.24)) { open = 0 }
+        Task {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            nav.searching = false
+            then()
+        }
+    }
+
+    private func remember() {
+        guard !term.isEmpty else { return }
+        recent = Array(([term] + recent.filter { $0.lowercased() != term.lowercased() }).prefix(8))
+        UserDefaults.standard.set(recent, forKey: "recentSearches")
+    }
+
+    private func runSearch() async {
+        guard !term.isEmpty else { res = SearchResults(); loading = false; dym = ""; return }
+        loading = true
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        if Task.isCancelled { return }
+        defer { if !Task.isCancelled { loading = false } }
+        do {
+            let r = try await Api.items(["searchTerm": term, "IncludeItemTypes": "Movie,Series,MusicAlbum,Audio,Playlist", "Recursive": true, "Limit": 60, "Fields": "ProviderIds,AlbumArtist,RunTimeTicks", "EnableImageTypes": "Primary,Backdrop", "ImageTypeLimit": 1])
+            if Task.isCancelled { return }
+            func by(_ t: String) -> [Item] { r.filter { $0.type == t } }
+            res = SearchResults(movies: by("Movie"), shows: by("Series"), albums: by("MusicAlbum"), songs: by("Audio"), playlists: by("Playlist"))
+            error = ""; dym = ""
+            if res.total == 0 {
+                struct Sug: Decodable { var suggestion: String? }
+                if let s: Sug = try? await Api.get("/JellyUI/Suggest", ["q": term], quiet: true) { dym = s.suggestion ?? "" }
+            }
+        } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+    }
+}
+
+// MARK: - Live TV
+
+private func clock(_ d: String?) -> String {
+    guard let d, let date = ISO8601DateFormatter.flexible(d) else { return "" }
+    let f = DateFormatter(); f.timeStyle = .short; f.dateStyle = .none
+    return f.string(from: date)
+}
+
+private let heartPath = "M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3z"
+
+/// A channel card (the web's .chc): its number large on a dark panel with a LIVE tag, then name, what is on, the times and a progress bar.
+struct ChannelCard: View {
+    let c: Item
+    let fav: Bool
+    var onFav: (Item) -> Void
+    var onOpen: (Item) -> Void
+
+    var body: some View {
+        var pct: Double = 0
+        var np = "No guide data"
+        var range = ""
+        if let cp = c.currentProgram, let s = ISO8601DateFormatter.flexible(cp.startDate ?? ""), let e = ISO8601DateFormatter.flexible(cp.endDate ?? "") {
+            pct = max(0, min(100, Date().timeIntervalSince(s) / e.timeIntervalSince(s) * 100))
+            np = cp.name ?? ""
+            range = "\(clock(cp.startDate)) – \(clock(cp.endDate))"
+        }
+        return ZStack(alignment: .topTrailing) {
+            Button { onOpen(c) } label: {
+                VStack(spacing: 0) {
+                    ZStack(alignment: .topLeading) {
+                        LinearGradient(colors: [Color(hex: 0x222228), Color(hex: 0x121216)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                        Text(c.number ?? "").font(.q(46)).foregroundStyle(Color(hex: 0x31313a)).frame(maxWidth: .infinity, maxHeight: .infinity)
+                        Text("LIVE").font(.q(10)).tracking(1.2).foregroundStyle(.white).padding(.horizontal, 6)
+                            .background(Color(hex: 0xe0344a), in: RoundedRectangle(cornerRadius: 3.6)).padding(8)
+                    }.frame(height: 106)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(c.title).font(.q(15)).foregroundStyle(Color(hex: 0xf2f2f2)).lineLimit(1)
+                        Text(np).font(.q(13)).foregroundStyle(Color.midText).lineLimit(1)
+                        Text(range).font(.q(11)).foregroundStyle(Color.dimText).frame(minHeight: 16)
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.white.opacity(0.15))
+                            GeometryReader { g in Capsule().fill(Color.pink).frame(width: g.size.width * pct / 100) }
+                        }.frame(height: 3.6).padding(.top, 6)
+                    }
+                    .padding(.top, 10).padding(.horizontal, 12).padding(.bottom, 12).frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(width: 220).background(Color(hex: 0x16161a)).clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }.buttonStyle(PressStyle())
+            Button { onFav(c) } label: {
+                SVGPath(d: heartPath).fill(fav ? Color.pink : .clear)
+                    .overlay(SVGPath(d: heartPath).stroke(fav ? Color.pink : Color(hex: 0xf2f2f2), style: StrokeStyle(lineWidth: 2, lineJoin: .round)))
+                    .frame(width: 18, height: 18).frame(width: 32, height: 32).background(Color.black.opacity(0.55), in: Circle())
+            }.buttonStyle(.plain).padding(6)
+        }
+        .frame(width: 220)
+    }
+}
+
+extension Api {
+    static func channels(withProgram: Bool) async -> [Item] {
+        ((try? await get("/LiveTv/Channels", ["userId": uid, "addCurrentProgram": withProgram ? true : nil, "enableUserData": true, "SortBy": "SortName", "Limit": 5000]) as ItemsResult)?.items) ?? []
+    }
+}
+
+struct LiveScreen: View {
+    @Environment(Nav.self) private var nav
+    @State private var chans: [Item] = []
+    @State private var loaded = false
+    @State private var filter = ""
+    @State private var pageNo = 1
+    @State private var favs: [String: Bool] = [:]
+    @State private var recents: [String] = UserDefaults.standard.stringArray(forKey: "recents") ?? []
+
+    private let LPAGE = 48
+
+    private func isFav(_ c: Item) -> Bool { favs[c.id] ?? (c.userData?.isFavorite ?? false) }
+    private func words(_ c: Item) -> String {
+        ((c.title + " " + (c.number ?? "")).lowercased()).replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
+    }
+
+    var body: some View {
+        let toks = filter.lowercased().replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression).split(separator: " ").map(String.init)
+        let list = toks.isEmpty ? chans : chans.filter { c in let w = " " + words(c); return toks.allSatisfy { w.contains(" " + $0) || w.contains($0) } }
+        let pages = max(1, Int(ceil(Double(list.count) / Double(LPAGE))))
+        let cur = min(pageNo, pages)
+        let page = Array(list.dropFirst((cur - 1) * LPAGE).prefix(LPAGE))
+        let favList = chans.filter(isFav)
+        let byId = Dictionary(chans.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let recList = recents.compactMap { byId[$0] }
+
+        Page(refresh: { await load() }) {
+            PageTitle(text: "Live TV")
+            TextField("", text: $filter, prompt: Text("Filter channels (e.g. uk bbc)").foregroundStyle(Color(hex: 0x6f6262)))
+                .font(.q(16)).foregroundStyle(Color.pink).textInputAutocapitalization(.never).autocorrectionDisabled()
+                .padding(.horizontal, 18).frame(height: 42).background(Color.surfaceHi, in: Capsule())
+                .padding(.horizontal, 16).padding(.top, 10)
+                .onChange(of: filter) { _, _ in pageNo = 1 }
+            if chans.isEmpty {
+                if !loaded { ProgressView().tint(Color.dimText).frame(maxWidth: .infinity).padding(24) }
+                else { Note("No channels found. Add a tuner or an M3U playlist under Dashboard → Live TV, then come back.") }
+            } else {
+                if toks.isEmpty {
+                    H2("Favorited channels")
+                    if favList.isEmpty { Text("No favorited channels yet. Tap the heart on any channel to add it here.").font(.q(14)).foregroundStyle(Color.dimText).padding(.horizontal, 16).padding(.top, 12) }
+                    else { chRow(favList) }
+                    if !recList.isEmpty { H2("Recently watched channels").padding(.top, -2); chRow(recList) }
+                }
+                H2(toks.isEmpty ? "All channels · \(chans.count)" : "Channels · \(list.count)").padding(.top, 34)
+                Pager(cur: cur, total: pages) { pageNo = $0 }
+                WordFlowGrid(spacing: 12) {
+                    ForEach(page) { c in ChannelCard(c: c, fav: isFav(c), onFav: toggle, onOpen: open) }
+                }.padding(.horizontal, 16).padding(.top, 12)
+                if page.isEmpty { Text("No channels match").font(.q(16)).foregroundStyle(Color.dimText).padding(.top, 30).frame(maxWidth: .infinity) }
+            }
+        }
+        .task { await load() }
+    }
+
+    private func chRow(_ items: [Item]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: 12) { ForEach(items) { c in ChannelCard(c: c, fav: isFav(c), onFav: toggle, onOpen: open) } }
+                .padding(.horizontal, 11).padding(.vertical, 6)
+        }.padding(.top, 6)
+    }
+
+    private func toggle(_ c: Item) {
+        let on = !isFav(c)
+        favs[c.id] = on
+        Task { await Api.setFavourite(c.id, on) }
+    }
+
+    private func open(_ c: Item) {
+        recents = Array(([c.id] + recents.filter { $0 != c.id }).prefix(12))
+        UserDefaults.standard.set(recents, forKey: "recents")
+        nav.play = PlayRequest(itemId: c.id, live: true)
+    }
+
+    private func load() async {
+        chans = await Api.channels(withProgram: false)
+        loaded = true
+        let withProg = await Api.channels(withProgram: true)
+        if !withProg.isEmpty { chans = withProg }
+    }
+}

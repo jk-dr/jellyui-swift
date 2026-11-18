@@ -37,6 +37,7 @@ struct WordFlow: Layout {
 
 /// A word that fills from left to right as it is sung (a soft edge, the web's wipe).
 private struct FillWord: View {
+    let ink: Ink
     let text: String
     let size: CGFloat
     let p: Double // 0...1
@@ -46,14 +47,14 @@ private struct FillWord: View {
         let pos = p * (1 + soft) // the edge travels past the end so the last letters finish lit
         Text(text)
             .font(.system(size: size, weight: .bold))
-            .foregroundStyle(.white.opacity(0.32))
+            .foregroundStyle(ink.color(0.32))
             .overlay(alignment: .leading) {
                 Text(text)
                     .font(.system(size: size, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(ink.color())
                     .mask {
                         LinearGradient(stops: [
-                            .init(color: .white, location: max(0, min(1, pos - soft))),
+                            .init(color: Color.white, location: max(0, min(1, pos - soft))),
                             .init(color: .clear, location: max(0, min(1, pos))),
                         ], startPoint: .leading, endPoint: .trailing)
                     }
@@ -65,6 +66,7 @@ private struct FillWord: View {
 // MARK: - A line
 
 private struct LyricRow: View, Equatable {
+    let ink: Ink
     let line: LyricLine
     let size: CGFloat
     let active: Bool
@@ -73,26 +75,26 @@ private struct LyricRow: View, Equatable {
     var onTap: () -> Void = {}
 
     static func == (a: LyricRow, b: LyricRow) -> Bool {
-        a.line.id == b.line.id && a.size == b.size && a.active == b.active && a.level == b.level && a.t == b.t
+        a.ink == b.ink && a.line.id == b.line.id && a.size == b.size && a.active == b.active && a.level == b.level && a.t == b.t
     }
 
     var body: some View {
         Group {
             if line.brk {
-                Dots(line: line, t: active ? t : 0, size: size)
+                Dots(ink: ink, line: line, t: active ? t : 0, size: size)
             } else if let words = line.words, active {
                 WordFlow(lineSpacing: 2) {
                     ForEach(Array(words.enumerated()), id: \.offset) { i, w in
                         let trimmed = w.w.trimmingCharacters(in: .whitespaces)
                         let gap: CGFloat = w.w.hasSuffix(" ") || i == words.count - 1 ? size * 0.26 : 0
-                        FillWord(text: trimmed, size: size, p: Lyr.progress(w, t))
+                        FillWord(ink: ink, text: trimmed, size: size, p: Lyr.progress(w, t))
                             .layoutValue(key: GapKey.self, value: gap)
                     }
                 }
             } else {
                 Text(line.text)
                     .font(.system(size: size, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(ink.color())
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -109,6 +111,7 @@ private struct LyricRow: View, Equatable {
 
 /// Three dots for a long silence: they fill as the silence passes.
 private struct Dots: View {
+    let ink: Ink
     let line: LyricLine
     let t: Double
     let size: CGFloat
@@ -121,7 +124,7 @@ private struct Dots: View {
             ForEach(0..<3, id: \.self) { i in
                 let seg = max(0, min(1, p * 3 - Double(i)))
                 Circle()
-                    .fill(.white.opacity(0.3 + 0.7 * seg))
+                    .fill(ink.color(0.3 + 0.7 * seg))
                     .frame(width: size * 0.42, height: size * 0.42)
                     .scaleEffect(0.8 + 0.2 * seg)
             }
@@ -138,6 +141,7 @@ struct LyricsView: View {
     var topInset: CGFloat = 40
     var bottomInset: CGFloat = 200
 
+    @Environment(\.ink) private var ink
     @State private var hold = Date.distantPast
 
     private var activeStarts: [Double] { Lyr.activeStarts(lines) }
@@ -169,6 +173,7 @@ struct LyricsView: View {
                     let isActive = synced && i == idx
                     let upcoming = synced && i > idx && i <= idx + 2 && (l.t ?? 1e9) - t < 2.5
                     LyricRow(
+                        ink: ink,
                         line: l, size: 30, active: isActive || !synced,
                         level: !synced ? 0.9 : (isActive ? 1 : (upcoming ? 0.3 : 0.15)),
                         t: isActive ? t : 0,
@@ -184,11 +189,11 @@ struct LyricsView: View {
         .onChange(of: sidx) { _, new in
             guard synced, new >= 0, Date() > hold else { return }
             withAnimation(.timingCurve(0.45, 0.05, 0.15, 1, duration: 0.8)) {
-                proxy.scrollTo(new, anchor: UnitPoint(x: 0.5, y: 0.4))
+                proxy.scrollTo(new, anchor: UnitPoint(x: 0.5, y: 0.5))
             }
         }
         .onAppear {
-            if synced, sidx >= 0 { proxy.scrollTo(sidx, anchor: UnitPoint(x: 0.5, y: 0.4)) }
+            if synced, sidx >= 0 { proxy.scrollTo(sidx, anchor: UnitPoint(x: 0.5, y: 0.5)) }
         }
     }
 }
