@@ -121,6 +121,7 @@ private func gateMessage(_ g: GateInfo?) -> String {
 }
 
 func formatTime(_ sec: Double) -> String {
+    guard sec.isFinite else { return "0:00" }
     let s = max(0, Int(sec.rounded()))
     let h = s / 3600, m = (s % 3600) / 60, ss = s % 60
     return (h > 0 ? "\(h):" + String(format: "%02d", m) : String(m)) + ":" + String(format: "%02d", ss)
@@ -314,6 +315,7 @@ struct Stage: View {
         .onAppear { setup() }
         .onDisappear { teardown() }
         .onChange(of: pb.source) { _, s in if let s { Task { await swap(to: s) } } }
+        .onChange(of: pb.phase) { _, p in if p == .error { buffering = false; swapMsg = ""; playErr = pb.error } }
         .task(id: pb.ms?.id) { await chooseDefaultSub() }
         .task(id: pb.itemId) { await loadSegments() }
         .task { await segmentLoop() }
@@ -420,10 +422,12 @@ struct Stage: View {
 
     private func goTo(_ id: String) async {
         reportStop()
-        // a new player for the next episode: the screen opens again on it
-        onExit()
-        try? await Task.sleep(nanoseconds: 450_000_000)
-        nav.play = PlayRequest(itemId: id)
+        player.pause()
+        swapMsg = "Opening…"; buffering = true; playErr = ""
+        cues = []; segs = []; skipSeg = nil; shown = []; chosenFor = ""; textSub = -1
+        reported = false; stopped = false; errRetries = 0; position = 0; scrub = nil
+        await pb.switchTo(id)
+        fav = pb.favourite
     }
 
     // MARK: controls
@@ -590,7 +594,7 @@ struct Stage: View {
                         Text("LIVE").font(.system(size: 11, weight: .heavy)).tracking(1).foregroundStyle(.white).padding(.horizontal, 8).padding(.vertical, 2)
                             .background(Color.danger, in: RoundedRectangle(cornerRadius: 4)).frame(maxWidth: .infinity, alignment: .leading).frame(height: 32)
                     } else {
-                        VideoSeek(position: scrub ?? position, duration: pb.duration > 0 ? pb.duration : (player.currentItem?.duration.seconds ?? 0), buffered: buffered, downloaded: pb.downloaded, limit: limit,
+                        VideoSeek(pos: { now }, duration: pb.duration > 0 ? pb.duration : (player.currentItem?.duration.seconds ?? 0), buffered: buffered, downloaded: pb.downloaded, active: visible, limit: limit,
                                   onScrub: { s in scrub = s; wake(stay: true) }, onSeek: { s in scrub = nil; seekTo(s) })
                     }
                     HStack(spacing: 2) {
@@ -680,42 +684,55 @@ private let BITRATES_VIDEO: [(value: Int, label: String)] = [
 // MARK: - The seek bar
 
 struct VideoSeek: View {
-    let position: Double
+    /// the playback position right now (read every frame while the controls are up)
+    let pos: () -> Double
     let duration: Double
     let buffered: Double
     let downloaded: Double
+    let active: Bool
     var limit: (Double) -> Double
     var onScrub: (Double) -> Void
     var onSeek: (Double) -> Void
-    @State private var dragging = false
+    @State private var drag: Double?
 
     var body: some View {
         VStack(spacing: 0) {
             GeometryReader { g in
                 let w = g.size.width
-                let f = duration > 0 ? max(0, min(1, position / duration)) : 0
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.28)).frame(height: 5.4)
-                    if downloaded > 0 && downloaded < 99.95 { Capsule().fill(Color(hex: 0x2f8cff)).frame(width: w * downloaded / 100, height: 5.4) }
-                    Capsule().fill(Color.white.opacity(0.3)).frame(width: duration > 0 ? w * min(1, buffered / duration) : 0, height: 5.4)
-                    Capsule().fill(Color.pink).frame(width: w * f, height: 5.4)
-                    Circle().fill(.white).frame(width: 13.2, height: 13.2).scaleEffect(dragging ? 1.5 : 1).shadow(color: .black.opacity(0.6), radius: 3, y: 1).offset(x: w * f - 6.6)
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !active && drag == nil)) { _ in
+                    let cur = drag.map { $0 * duration } ?? pos()
+                    let f = duration > 0 ? max(0, min(1, cur / duration)) : 0
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.white.opacity(0.28)).frame(height: 5.4)
+                        if downloaded > 0 && downloaded < 99.95 { Capsule().fill(Color(hex: 0x2f8cff)).frame(width: w * downloaded / 100, height: 5.4) }
+                        Capsule().fill(Color.white.opacity(0.3)).frame(width: duration > 0 ? w * min(1, buffered / duration) : 0, height: 5.4)
+                        Capsule().fill(Color.pink).frame(width: w * f, height: 5.4)
+                        Circle().fill(.white).frame(width: 13.2, height: 13.2).scaleEffect(drag != nil ? 1.5 : 1)
+                            .shadow(color: .black.opacity(0.6), radius: 3, y: 1).offset(x: w * f - 6.6)
+                            .animation(.easeOut(duration: 0.12), value: drag != nil)
+                    }
+                    .frame(height: 32)
+                    .overlay(alignment: .bottom) { EmptyView() }
                 }
-                .frame(height: 32)
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0).onChanged { v in
-                    dragging = true
-                    let s = limit(max(0, min(1, v.location.x / max(1, w))) * duration)
+                    let f = max(0, min(1, v.location.x / max(1, w)))
+                    let s = limit(f * duration)
+                    drag = duration > 0 ? s / duration : 0
                     onScrub(s)
                 }.onEnded { v in
-                    dragging = false
-                    onSeek(limit(max(0, min(1, v.location.x / max(1, w))) * duration))
+                    let s = limit(max(0, min(1, v.location.x / max(1, w))) * duration)
+                    drag = nil
+                    onSeek(s)
                 })
             }.frame(height: 32)
-            HStack {
-                Text(formatTime(min(position, duration > 0 ? duration : position))).font(.q(13)).foregroundStyle(Color(hex: 0xd4d4d4)).monospacedDigit()
-                Spacer()
-                Text("-" + formatTime(max(0, duration - position))).font(.q(13)).foregroundStyle(Color(hex: 0xd4d4d4)).monospacedDigit()
+            TimelineView(.animation(minimumInterval: 0.5, paused: !active && drag == nil)) { _ in
+                let cur = drag.map { $0 * duration } ?? pos()
+                HStack {
+                    Text(formatTime(min(cur, duration > 0 ? duration : cur))).font(.q(13)).foregroundStyle(Color(hex: 0xd4d4d4)).monospacedDigit()
+                    Spacer()
+                    Text("-" + formatTime(max(0, duration - cur))).font(.q(13)).foregroundStyle(Color(hex: 0xd4d4d4)).monospacedDigit()
+                }
             }
         }
     }

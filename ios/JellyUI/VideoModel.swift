@@ -131,13 +131,25 @@ final class VideoModel {
     @ObservationIgnored private var skipGate = false
     @ObservationIgnored private var keyN = 0
     @ObservationIgnored private var busyAskedAt = Date.distantPast
-    @ObservationIgnored let request: PlayRequest
+    @ObservationIgnored var request: PlayRequest
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
 
     init(_ r: PlayRequest) { request = r }
 
     func dispose() { gone = true; tasks.forEach { $0.cancel() } }
     func playAnyway() { skipGate = true }
+
+    /// Opens another episode in the same player (next / previous / auto-play).
+    func switchTo(_ id: String) async {
+        tasks.forEach { $0.cancel() }
+        tasks = []
+        request = PlayRequest(itemId: id)
+        source = nil; ms = nil; subIndex = -1; audioIndex = -1; downloaded = 0
+        prevId = nil; nextId = nil; gate = nil; error = ""
+        phase = .loading; message = "Opening the stream…"
+        do { try await startItem(id) }
+        catch { phase = .error; self.error = (error as? ApiError)?.message ?? error.localizedDescription }
+    }
 
     func start() async {
         let t0 = Date()
