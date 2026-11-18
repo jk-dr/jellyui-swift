@@ -338,7 +338,7 @@ struct MusicScreen: View {
             }
 
             H2("Quick Play").padding(.top, 30 - 36)
-            WordFlowGrid(spacing: 10) {
+            WordFlowGrid(spacing: 10, rowSpacing: 12) {
                 ForEach(Array(quick.prefix(cols * 3).enumerated()), id: \.element.id) { i, it in
                     QuickTile(it: it, index: i, width: tileW) { idx in
                         pm.play(quick, at: idx, more: { await Api.randomSongs(50) })

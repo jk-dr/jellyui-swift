@@ -135,7 +135,7 @@ struct SearchScreen: View {
         }
     }
 
-    private func go(_ r: Route) { close { nav.go(r) } }
+    private func go(_ r: Route) { focused = false; nav.go(r) }
 
     private func cancel() {
         focused = false

@@ -198,12 +198,13 @@ struct FlowLetters: View {
 /// A wrapping row of equal items.
 struct WordFlowGrid: Layout {
     var spacing: CGFloat = 6
+    var rowSpacing: CGFloat? = nil
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let maxW = proposal.width ?? 300
         var x: CGFloat = 0, y: CGFloat = 0, rowH: CGFloat = 0
         for s in subviews {
             let sz = s.sizeThatFits(.unspecified)
-            if x > 0 && x + sz.width > maxW { x = 0; y += rowH + spacing; rowH = 0 }
+            if x > 0 && x + sz.width > maxW { x = 0; y += rowH + (rowSpacing ?? spacing); rowH = 0 }
             x += sz.width + spacing; rowH = max(rowH, sz.height)
         }
         return CGSize(width: maxW, height: y + rowH)
@@ -212,7 +213,7 @@ struct WordFlowGrid: Layout {
         var x = b.minX, y = b.minY, rowH: CGFloat = 0
         for s in subviews {
             let sz = s.sizeThatFits(.unspecified)
-            if x > b.minX && x + sz.width > b.maxX { x = b.minX; y += rowH + spacing; rowH = 0 }
+            if x > b.minX && x + sz.width > b.maxX { x = b.minX; y += rowH + (rowSpacing ?? spacing); rowH = 0 }
             s.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(sz))
             x += sz.width + spacing; rowH = max(rowH, sz.height)
         }

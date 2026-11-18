@@ -35,31 +35,62 @@ struct WordFlow: Layout {
 
 // MARK: - One word
 
+/// A long held word jumps letter by letter as it is sung (the web's letter jump).
+private func isJumpy(_ w: LyricWord) -> Bool {
+    let n = w.w.replacingOccurrences(of: " ", with: "").count
+    let dur = max(0.05, (w.e ?? w.t + 0.4) - w.t)
+    return n >= 3 && dur * 1000 >= max(360, 240 + 40 * Double(n))
+}
+
+/// 0...1: how high a letter is at time t (it rises before its moment `pk` and falls after it).
+private func letterY(_ t: Double, _ pk: Double, _ rise: Double, _ fall: Double) -> CGFloat {
+    if t < pk { return CGFloat(max(0, 1 - (pk - t) / rise)) }
+    return CGFloat(max(0, 1 - (t - pk) / fall))
+}
+
 /// A word that fills from left to right as it is sung (a soft edge, the web's wipe).
 private struct FillWord: View {
     let ink: Ink
+    let word: LyricWord
     let text: String
     let size: CGFloat
-    let p: Double // 0...1
+    let t: Double
 
     var body: some View {
+        let p = Lyr.progress(word, t)
         let soft = 0.35
         let pos = p * (1 + soft) // the edge travels past the end so the last letters finish lit
-        Text(text)
-            .font(.lato(size))
-            .foregroundStyle(ink.color(0.32))
-            .overlay(alignment: .leading) {
-                Text(text)
-                    .font(.lato(size))
-                    .foregroundStyle(ink.color())
-                    .mask {
-                        LinearGradient(stops: [
-                            .init(color: Color.white, location: max(0, min(1, pos - soft))),
-                            .init(color: .clear, location: max(0, min(1, pos))),
-                        ], startPoint: .leading, endPoint: .trailing)
-                    }
+        let jumpy = isJumpy(word) && p > 0 && p < 1.4
+        ZStack(alignment: .leading) {
+            face.foregroundStyle(ink.color(0.32))
+            face.foregroundStyle(ink.color())
+                .mask {
+                    LinearGradient(stops: [
+                        .init(color: Color.white, location: max(0, min(1, pos - soft))),
+                        .init(color: .clear, location: max(0, min(1, pos))),
+                    ], startPoint: .leading, endPoint: .trailing)
+                }
+        }
+        .fixedSize()
+        .id(jumpy)
+    }
+
+    @ViewBuilder private var face: some View {
+        if isJumpy(word) {
+            let chars = Array(text)
+            let n = max(1, chars.count)
+            let dur = max(0.05, (word.e ?? word.t + 0.4) - word.t)
+            let rise = min(0.45, max(0.11, 0.06 * Double(n - 1), 1.2 * dur / Double(n)))
+            let fall = max(0.08, 0.75 * rise)
+            HStack(spacing: 0) {
+                ForEach(Array(chars.enumerated()), id: \.offset) { k, c in
+                    let pk = word.t + dur * Double(k) / Double(n)
+                    Text(String(c)).font(.lato(size)).offset(y: -size * 0.09 * letterY(t, pk, rise, fall))
+                }
             }
-            .fixedSize()
+        } else {
+            Text(text).font(.lato(size))
+        }
     }
 }
 
@@ -78,32 +109,48 @@ private struct LyricRow: View, Equatable {
         a.ink == b.ink && a.line.id == b.line.id && a.size == b.size && a.active == b.active && a.level == b.level && a.t == b.t
     }
 
+    private func flow(_ words: [LyricWord], _ s: CGFloat) -> some View {
+        WordFlow(lineSpacing: 6) {
+            ForEach(Array(words.enumerated()), id: \.offset) { i, w in
+                let trimmed = w.w.trimmingCharacters(in: .whitespaces)
+                // a gap after a word that ends with a space, or before one that starts with a space
+                let next = i + 1 < words.count ? words[i + 1].w : ""
+                let gap: CGFloat = w.w.hasSuffix(" ") || next.hasPrefix(" ") || i == words.count - 1 ? s * 0.26 : 0
+                FillWord(ink: ink, word: w, text: trimmed, size: s, t: t)
+                    .layoutValue(key: GapKey.self, value: gap)
+            }
+        }
+    }
+
     var body: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 2) {
             if line.brk {
                 Dots(ink: ink, line: line, t: active ? t : 0, size: size)
             } else if let words = line.words, active {
-                WordFlow(lineSpacing: 2) {
-                    ForEach(Array(words.enumerated()), id: \.offset) { i, w in
-                        let trimmed = w.w.trimmingCharacters(in: .whitespaces)
-                        let gap: CGFloat = w.w.hasSuffix(" ") || i == words.count - 1 ? size * 0.26 : 0
-                        FillWord(ink: ink, text: trimmed, size: size, p: Lyr.progress(w, t))
-                            .layoutValue(key: GapKey.self, value: gap)
-                    }
-                }
+                flow(words, size)
+                // backing vocals: smaller, under the line
+                if let back = line.back, !back.isEmpty { flow(back, size * 0.7).padding(.top, 3) }
             } else {
                 Text(line.text)
                     .font(.lato(size))
                     .foregroundStyle(ink.color())
+                    .lineSpacing(6)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if let back = line.back, !back.isEmpty {
+                    Text(back.map { $0.w }.joined().trimmingCharacters(in: .whitespaces))
+                        .font(.lato(size * 0.7)).foregroundStyle(ink.color(0.7)).padding(.top, 3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.trailing, 20) // the sung line grows from its left edge: room for it
+        .padding(.vertical, 25)
         .opacity(level)
-        .scaleEffect(active ? 1 : 0.95, anchor: .leading)
+        .scaleEffect(active ? 1.08 : 1, anchor: .leading)
         .animation(.easeInOut(duration: 0.85), value: level)
-        .animation(.easeInOut(duration: 0.8), value: active)
+        .animation(.timingCurve(0.22, 0.61, 0.36, 1, duration: 0.8), value: active)
         .contentShape(Rectangle())
         .onTapGesture(perform: onTap)
     }
@@ -168,7 +215,7 @@ struct LyricsView: View {
         let synced = lines.contains { $0.t != nil }
         VStack(alignment: .leading, spacing: 0) {
             Color.clear.frame(height: topInset)
-            LazyVStack(alignment: .leading, spacing: 18) {
+            LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(lines.enumerated()), id: \.element.id) { i, l in
                     let isActive = synced && i == idx
                     let upcoming = synced && i > idx && i <= idx + 2 && (l.t ?? 1e9) - t < 2.5

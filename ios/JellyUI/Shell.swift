@@ -41,6 +41,7 @@ final class Nav {
     var tab: RootTab = .home
     var path: [Route] = []
     var searching = false
+    var searchBase = 0
     var play: PlayRequest?
 
     func go(_ r: Route) { FrameMonitor.event("go", String(describing: r)); path.append(r) }
@@ -68,6 +69,7 @@ extension Item {
 struct RootView: View {
     @Environment(PlayerModel.self) private var player
     @State private var nav = Nav()
+    @State private var visited: Set<RootTab> = [.home]
 
     var body: some View {
         @Bindable var p = player
@@ -84,7 +86,9 @@ struct RootView: View {
             ShellOverlay()
             if p.showFull { NowPlaying().zIndex(20) }
             if nav.searching {
+                // a result opens over the search; Back returns to it (the search stays where it was)
                 SearchScreen().transition(.identity).zIndex(10)
+                    .opacity(nav.path.count == nav.searchBase ? 1 : 0).allowsHitTesting(nav.path.count == nav.searchBase)
             }
         }
         .environment(nav)
@@ -92,7 +96,18 @@ struct RootView: View {
     }
 
     @ViewBuilder private var rootPage: some View {
-        switch nav.tab {
+        ZStack {
+            ForEach([RootTab.home, .movies, .shows, .music, .live], id: \.self) { t in
+                if visited.contains(t) || nav.tab == t {
+                    page(t).opacity(nav.tab == t ? 1 : 0).allowsHitTesting(nav.tab == t).zIndex(nav.tab == t ? 1 : 0)
+                }
+            }
+        }
+        .onChange(of: nav.tab) { _, t in visited.insert(t) }
+    }
+
+    @ViewBuilder private func page(_ t: RootTab) -> some View {
+        switch t {
         case .home: HomeScreen()
         case .movies: LibraryListScreen(kind: .movies)
         case .shows: LibraryListScreen(kind: .shows)
@@ -164,7 +179,7 @@ struct HeaderBar: View {
                 .init(color: Color(hex: 0x0c0c0e, alpha: 0.15), location: 0.9), .init(color: Color(hex: 0x0c0c0e, alpha: 0), location: 1),
             ], startPoint: .top, endPoint: .bottom)
             .frame(height: 120 + top).allowsHitTesting(false)
-            Button { withAnimation(.easeInOut(duration: 0.38)) { nav.searching = true } } label: {
+            Button { nav.searchBase = nav.path.count; withAnimation(.easeInOut(duration: 0.38)) { nav.searching = true } } label: {
                 ZStack {
                     SVGPath(d: "M24 14a10 10 0 11-20 0 10 10 0 0120 0z M22 22l7 7", box: 32)
                         .stroke(Color(hex: 0x3e2222), style: StrokeStyle(lineWidth: 2.6, lineCap: .round)).frame(width: 22, height: 22)

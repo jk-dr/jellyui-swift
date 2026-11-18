@@ -86,7 +86,7 @@ struct MiniPlayer: View {
                     Button(role: .destructive) { closeAsk = true } label: { Label("Close playback", systemImage: "xmark") }
                 } label: { Icon(name: "moreV", size: 22, color: Color(hex: 0xd4d4d4)).frame(width: 38, height: 38) }
                     .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 10).padding(.top, 65)
-                MiniProgress(duration: pm.duration)
+                PlayBar(duration: pm.duration, ink: Ink(r: 248, g: 204, b: 204, a: 1), compact: true)
                     .padding(.horizontal, 12).frame(maxHeight: .infinity, alignment: .bottom).padding(.bottom, 10)
             }
             .frame(height: 144)
@@ -370,6 +370,7 @@ struct EdgeFades: View {
 struct PlayBar: View {
     let duration: Double
     let ink: Ink
+    var compact = false
     @Environment(PlayerModel.self) private var pm
     @State private var drag: Double?
 
@@ -386,7 +387,7 @@ struct PlayBar: View {
                         Capsule().fill(ink.color(0.3)).frame(height: 6)
                         Capsule().fill(ink.color()).frame(width: g.size.width * f, height: 6)
                         Circle().fill(ink.solid).frame(width: 14.4, height: 14.4).scaleEffect(drag != nil ? 1.25 : 1).offset(x: g.size.width * f - 7.2)
-                    }.frame(height: 40)
+                    }.frame(height: compact ? 20 : 40)
                 }
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0).onChanged { v in drag = max(0, min(1, v.location.x / max(1, g.size.width))) }
@@ -395,7 +396,7 @@ struct PlayBar: View {
                         pm.seek(to: f * duration)
                         drag = nil
                     })
-            }.frame(height: 40).padding(.horizontal, 6)
+            }.frame(height: compact ? 20 : 40).padding(.horizontal, 6)
             Text(timeText(duration)).font(.system(size: 11)).monospacedDigit().foregroundStyle(ink.color()).frame(minWidth: 34, alignment: .trailing)
         }
     }
