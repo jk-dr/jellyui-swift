@@ -199,7 +199,7 @@ struct LyricsView: View {
         let sstarts = scrollStarts
         ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
-                TimelineView(.animation) { tl in
+                TimelineView(.animation(minimumInterval: 1.0 / 40.0)) { tl in
                     column(starts: starts, sstarts: sstarts, proxy: proxy, date: tl.date)
                 }
             }

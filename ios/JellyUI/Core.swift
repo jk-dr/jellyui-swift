@@ -392,7 +392,7 @@ final class ImageStore {
     private var loading: [URL: Task<UIImage?, Never>] = [:]
     private let lock = NSLock()
 
-    init() { mem.countLimit = 300 }
+    init() { mem.totalCostLimit = 120 * 1_048_576 }
 
     func cached(_ url: URL) -> UIImage? { mem.object(forKey: url as NSURL) }
 
@@ -412,8 +412,10 @@ final class ImageStore {
             var r = URLRequest(url: url)
             r.cachePolicy = .returnCacheDataElseLoad
             r.setValue(Session.shared.authHeader(), forHTTPHeaderField: "Authorization")
-            guard let (d, _) = try? await Api.session.data(for: r), let i = UIImage(data: d) else { return nil }
-            self.mem.setObject(i, forKey: url as NSURL)
+            guard let (d, _) = try? await Api.session.data(for: r), let raw = UIImage(data: d) else { return nil }
+            // decoded here, in the background, so the first draw on screen does not have to
+            let i = await raw.byPreparingForDisplay() ?? raw
+            self.mem.setObject(i, forKey: url as NSURL, cost: Int(i.size.width * i.size.height * i.scale * i.scale * 4))
             return i
         }
         loading[url] = t

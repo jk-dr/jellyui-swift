@@ -26,7 +26,7 @@ struct MarqueeText: View {
         let cycle = HOLD + cruise
         ZStack(alignment: center && !over ? .center : .leading) {
             if over {
-                TimelineView(.animation) { tl in
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { tl in
                     let t = tl.date.timeIntervalSince(start).truncatingRemainder(dividingBy: cycle)
                     let x: CGFloat = t < HOLD ? 0 : -CGFloat((t - HOLD) / cruise) * d
                     HStack(spacing: GAPX) {
@@ -376,12 +376,12 @@ struct PlayBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            TimelineView(.animation(minimumInterval: 1.0 / 20.0)) { _ in
+            TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: !pm.isPlaying && drag == nil)) { _ in
                 Text(timeText(drag.map { $0 * duration } ?? min(pm.now, duration > 0 ? duration : pm.now))).font(.system(size: 11)).monospacedDigit()
                     .foregroundStyle(ink.color()).frame(minWidth: 34, alignment: .leading)
             }
             GeometryReader { g in
-                TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { _ in
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !pm.isPlaying && drag == nil)) { _ in
                     let f = drag ?? (duration > 0 ? max(0, min(1, pm.now / duration)) : 0)
                     ZStack(alignment: .leading) {
                         Capsule().fill(ink.color(0.3)).frame(height: 6)
