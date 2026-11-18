@@ -444,6 +444,8 @@ struct Stage: View {
         }
     }
 
+    private func run(_ f: @escaping () async -> Void) { Task { await f() } }
+
     private func togglePlay() { if player.timeControlStatus == .paused { player.play() } else { player.pause() }; wake() }
 
     /// An on-demand file only exists up to the downloaded point: seeking past it would just stall, so stop just short of it.
@@ -528,7 +530,7 @@ struct Stage: View {
             let key = seg.type + String(seg.start)
             if act == "auto" && !shown.contains(key) {
                 shown.insert(key)
-                player.seek(to: CMTime(seconds: seg.end, preferredTimescale: 600))
+                player.seek(to: CMTime(seconds: seg.end, preferredTimescale: 600)) { _ in }
                 showFlash("Skipped \(segLabel(seg.type))")
             } else if act == "ask" && !shown.contains(key) {
                 shown.insert(key)
@@ -625,13 +627,13 @@ struct Stage: View {
         let rows: [(key: String, label: String, sub: String?, on: Bool, press: () -> Void)] = {
             switch kind {
             case .quality:
-                return BITRATES_VIDEO.map { q in (String(q.value), q.label, nil, q.value == (pb.maxBitrate >= 120_000_000 ? 120_000_000 : pb.maxBitrate), { menu = nil; settings.maxBitrate = q.value; Task { await reopen(bitrate: q.value, label: "Changing quality…") } }) }
+                return BITRATES_VIDEO.map { q in (String(q.value), q.label, nil, q.value == (pb.maxBitrate >= 120_000_000 ? 120_000_000 : pb.maxBitrate), { menu = nil; settings.maxBitrate = q.value; run { await reopen(bitrate: q.value, label: "Changing quality…") } }) }
             case .subs:
-                return [("off", "Off", nil, subSel == -1, { Task { await chooseSub(-1) } })] + subs.map { x in
-                    (String(x.index), x.displayTitle ?? "\(x.language ?? "Subtitles")\(x.isForced ? " (forced)" : "")", x.isText == false ? "Picture subtitles: converted by the server" : nil, subSel == x.index, { Task { await chooseSub(x.index) } })
+                return [("off", "Off", nil, subSel == -1, { run { await chooseSub(-1) } })] + subs.map { x in
+                    (String(x.index), x.displayTitle ?? "\(x.language ?? "Subtitles")\(x.isForced ? " (forced)" : "")", x.isText == false ? "Picture subtitles: converted by the server" : nil, subSel == x.index, { run { await chooseSub(x.index) } })
                 }
             case .audio:
-                return audio.map { x in (String(x.index), x.displayTitle ?? x.language ?? "Track \(x.index)", nil, audioSel == x.index, { menu = nil; Task { await reopen(audio: x.index, label: "Changing audio…") } }) }
+                return audio.map { x in (String(x.index), x.displayTitle ?? x.language ?? "Track \(x.index)", nil, audioSel == x.index, { menu = nil; run { await reopen(audio: x.index, label: "Changing audio…") } }) }
             }
         }()
         ZStack(alignment: .bottom) {

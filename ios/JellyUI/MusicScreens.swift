@@ -55,9 +55,9 @@ final class PlaylistCache {
     func reset() { at = .distantPast; load() }
 }
 
-struct AddToPlaylistMenu<Label: View>: View {
+struct AddToPlaylistMenu<Content: View>: View {
     let ids: [String]
-    @ViewBuilder var label: () -> Label
+    @ViewBuilder var label: () -> Content
     @State private var naming = false
     @State private var name = ""
     private let pls = PlaylistCache.shared
@@ -88,10 +88,10 @@ struct AddToPlaylistMenu<Label: View>: View {
 }
 
 /// A song's menu: Play next, Add to queue, Add to playlist (a submenu), Favourite, Go to album. In the player also Shuffle and Repeat.
-struct SongMenu<Label: View>: View {
+struct SongMenu<Content: View>: View {
     let it: Item
     var player = false
-    @ViewBuilder var label: () -> Label
+    @ViewBuilder var label: () -> Content
     @Environment(PlayerModel.self) private var pm
     @Environment(Nav.self) private var nav
     private let pls = PlaylistCache.shared

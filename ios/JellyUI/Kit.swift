@@ -28,7 +28,8 @@ struct SVGPath: Shape {
     var box: CGFloat = 24
 
     func path(in rect: CGRect) -> Path {
-        var p = SVGParser(d).parse()
+        var parser = SVGParser(d)
+        var p = parser.parse()
         let s = min(rect.width, rect.height) / box
         p = p.applying(CGAffineTransform(scaleX: s, y: s))
         return p.offsetBy(dx: rect.minX, dy: rect.minY)
