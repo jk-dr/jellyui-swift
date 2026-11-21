@@ -21,12 +21,12 @@ enum Tour {
         guard let r = route else { return }
         try? await Task.sleep(for: .seconds(1))
         switch r {
-        case "home": nav.root(.home)
+        case "home": nav.tab = .home
         case "movies": nav.root(.movies)
         case "shows": nav.root(.shows)
         case "music": nav.root(.music)
         case "live": nav.root(.live)
-        case "settings": nav.go(.settings)
+        case "settings": nav.tab = .settings
         case "search": nav.searching = true
         case "movie": if let i = await first("Movie") { nav.go(.movie(i.id)) }
         case "show": if let i = await first("Series") { nav.go(.show(i.id)) }

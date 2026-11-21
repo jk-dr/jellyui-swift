@@ -6,14 +6,19 @@ extension Api {
     }
 }
 
-/// The page title the web shows: 36 pink, centred, with a shadow.
+/// The page title the web shows: 36 pink, left, under the search bar, with a shadow.
+/// On the Libraries tab a library's title is the native menu that switches library.
 struct PageTitle: View {
     let text: String
-    var top: CGFloat = 130
+    var top: CGFloat = 66
+    @Environment(Nav.self) private var nav
     var body: some View {
-        Text(text).font(.q(36)).foregroundStyle(Color.pink).multilineTextAlignment(.center)
-            .shadow(color: .black, radius: 4, y: 1)
-            .frame(maxWidth: .infinity).padding(.top, top)
+        Group {
+            if nav.tab == .libraries, nav.path.isEmpty, let l = Lib.titled(text) { LibrarySwitcher(lib: l) }
+            else { Text(text).font(.q(36)).foregroundStyle(Color.pink) }
+        }
+        .shadow(color: .black, radius: 4, y: 1)
+        .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 28).padding(.top, top)
     }
 }
 

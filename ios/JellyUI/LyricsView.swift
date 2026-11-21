@@ -1,39 +1,55 @@
 import SwiftUI
 
-// MARK: - Word layout
+// Fullscreen lyrics, built for 120 Hz without dropped frames:
+//  - Every row is ONE Text laid out once. Rows never relayout when they become current, so nothing jumps.
+//  - The word wipe, the soft edge and the letter jump are drawn by a TextRenderer straight from the laid-out glyphs:
+//    per frame there is no layout, no view diffing, only drawing of the single sung row.
+//  - Only the sung row sits in a TimelineView. The other rows are Equatable and static.
+//  - Which row is sung is not polled per frame: LyricsClock sleeps until the next row's start (or a seek / pause).
 
-private struct GapKey: LayoutValueKey { static let defaultValue: CGFloat = 0 }
+// MARK: - Clock: the current and scroll-target row, changed only at row boundaries
 
-/// Words flow left to right and wrap, with a gap after each word (none inside a split word).
-struct WordFlow: Layout {
-    var lineSpacing: CGFloat = 4
+@Observable
+final class LyricsClock {
+    private(set) var idx = -1
+    private(set) var sidx = -1
+    @ObservationIgnored private var task: Task<Void, Never>?
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let maxW = proposal.width ?? .infinity
-        var x: CGFloat = 0, y: CGFloat = 0, rowH: CGFloat = 0, w: CGFloat = 0
-        for s in subviews {
-            let sz = s.sizeThatFits(.unspecified)
-            if x > 0 && x + sz.width > maxW + 0.5 { w = max(w, x); x = 0; y += rowH + lineSpacing; rowH = 0 }
-            x += sz.width + s[GapKey.self]
-            rowH = max(rowH, sz.height)
+    func run(starts: [Double], sstarts: [Double], player: PlayerModel) {
+        task?.cancel()
+        task = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                let t = player.now + Lyr.ahead
+                let i = Lyr.indexAt(starts, t)
+                let s = max(i, Lyr.indexAt(sstarts, t))
+                if i != self.idx { self.idx = i }
+                if s != self.sidx { self.sidx = s }
+                // sleep until the next boundary (either list), capped so a seek or pause is noticed within 0.25 s
+                let nextA = i + 1 < starts.count ? starts[i + 1] : .infinity
+                let nextS = s + 1 < sstarts.count ? sstarts[s + 1] : .infinity
+                let wait = player.isPlaying ? min(0.25, max(0.008, min(nextA, nextS) - t)) : 0.25
+                try? await Task.sleep(for: .seconds(wait))
+            }
         }
-        w = max(w, x)
-        return CGSize(width: min(w, maxW.isFinite ? maxW : w), height: y + rowH)
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX, y = bounds.minY, rowH: CGFloat = 0
-        for s in subviews {
-            let sz = s.sizeThatFits(.unspecified)
-            if x > bounds.minX && x + sz.width > bounds.maxX + 0.5 { x = bounds.minX; y += rowH + lineSpacing; rowH = 0 }
-            s.place(at: CGPoint(x: x, y: y), anchor: .topLeading, proposal: ProposedViewSize(sz))
-            x += sz.width + s[GapKey.self]
-            rowH = max(rowH, sz.height)
-        }
-    }
+    func stop() { task?.cancel(); task = nil }
+    deinit { task?.cancel() }
 }
 
-// MARK: - One word
+// MARK: - Text pieces
+
+/// Marks which word a run of glyphs belongs to (index into the row's words; back vocals offset by 10_000).
+private struct WordTag: TextAttribute { let i: Int }
+
+private func rowText(_ words: [LyricWord], base: Int, size: CGFloat) -> Text {
+    var out = Text("")
+    for (k, w) in words.enumerated() {
+        out = out + Text(w.w).customAttribute(WordTag(i: base + k))
+    }
+    return out.font(.lato(size))
+}
 
 /// A long held word jumps letter by letter as it is sung (the web's letter jump).
 private func isJumpy(_ w: LyricWord) -> Bool {
@@ -42,106 +58,112 @@ private func isJumpy(_ w: LyricWord) -> Bool {
     return n >= 3 && dur * 1000 >= max(360, 240 + 40 * Double(n))
 }
 
-/// 0...1: how high a letter is at time t (it rises before its moment `pk` and falls after it).
-private func letterY(_ t: Double, _ pk: Double, _ rise: Double, _ fall: Double) -> CGFloat {
-    if t < pk { return CGFloat(max(0, 1 - (pk - t) / rise)) }
-    return CGFloat(max(0, 1 - (t - pk) / fall))
-}
+// MARK: - Renderer
 
-/// A word that fills from left to right as it is sung (a soft edge, the web's wipe).
-private struct FillWord: View {
-    let ink: Ink
-    let word: LyricWord
-    let text: String
+/// Draws a row: each word dim, then lit up to its wipe position with a soft edge. Long words lift letter by letter.
+private struct WipeRenderer: TextRenderer {
+    var t: Double
+    let words: [LyricWord]
+    let back: [LyricWord]
     let size: CGFloat
-    let t: Double
+    var dim: Double = 0.32
 
-    var body: some View {
-        let p = Lyr.progress(word, t)
-        let soft = 0.35
-        let pos = p * (1 + soft) // the edge travels past the end so the last letters finish lit
-        let jumpy = isJumpy(word) && p > 0 && p < 1.4
-        ZStack(alignment: .leading) {
-            face.foregroundStyle(ink.color(0.32))
-            face.foregroundStyle(ink.color())
-                .mask {
-                    LinearGradient(stops: [
-                        .init(color: Color.white, location: max(0, min(1, pos - soft))),
-                        .init(color: .clear, location: max(0, min(1, pos))),
-                    ], startPoint: .leading, endPoint: .trailing)
-                }
-        }
-        .fixedSize()
-        .id(jumpy)
+    var displayPadding: EdgeInsets { EdgeInsets(top: size * 0.14, leading: 2, bottom: 2, trailing: 2) }
+
+    private func word(_ i: Int) -> LyricWord? {
+        if i >= 10_000 { let j = i - 10_000; return back.indices.contains(j) ? back[j] : nil }
+        return words.indices.contains(i) ? words[i] : nil
     }
 
-    @ViewBuilder private var face: some View {
-        if isJumpy(word) {
-            let chars = Array(text)
-            let n = max(1, chars.count)
-            let dur = max(0.05, (word.e ?? word.t + 0.4) - word.t)
-            let rise = min(0.45, max(0.11, 0.06 * Double(n - 1), 1.2 * dur / Double(n)))
-            let fall = max(0.08, 0.75 * rise)
-            HStack(spacing: 0) {
-                ForEach(Array(chars.enumerated()), id: \.offset) { k, c in
-                    let pk = word.t + dur * Double(k) / Double(n)
-                    Text(String(c)).font(.lato(size)).offset(y: -size * 0.09 * letterY(t, pk, rise, fall))
+    func draw(layout: Text.Layout, in ctx: inout GraphicsContext) {
+        let soft = 0.35
+        for line in layout {
+            for run in line {
+                guard let tag = run[WordTag.self], let w = word(tag.i) else { ctx.draw(run); continue }
+                let p = Lyr.progress(w, t)
+                let r = run.typographicBounds.rect
+                let jumpy = p > 0 && p < 1 && isJumpy(w)
+
+                if jumpy {
+                    // letter jump: each glyph rises before its moment and settles after it
+                    let n = max(1, run.count)
+                    let dur = max(0.05, (w.e ?? w.t + 0.4) - w.t)
+                    let rise = min(0.45, max(0.11, 0.06 * Double(n - 1), 1.2 * dur / Double(n)))
+                    let fall = max(0.08, 0.75 * rise)
+                    for (k, g) in run.enumerated() {
+                        let pk = w.t + dur * Double(k) / Double(n)
+                        let y = t < pk ? max(0, 1 - (pk - t) / rise) : max(0, 1 - (t - pk) / fall)
+                        var c = ctx
+                        c.translateBy(x: 0, y: -size * 0.09 * y)
+                        drawWipe(g, rect: g.typographicBounds.rect, wordRect: r, p: p, soft: soft, in: &c)
+                    }
+                } else {
+                    drawWipe(run, rect: r, wordRect: r, p: p, soft: soft, in: &ctx)
                 }
             }
-        } else {
-            Text(text).font(.lato(size))
         }
+    }
+
+    /// `rect` is the piece being drawn (a word or one glyph of it); the wipe runs across the whole word (`wordRect`).
+    private func drawWipe<S: GlyphDrawable>(_ piece: S, rect: CGRect, wordRect: CGRect, p: Double, soft: Double, in ctx: inout GraphicsContext) {
+        if p <= 0 { var c = ctx; c.opacity = dim; piece.draw(in: &c); return }
+        if p >= 1 { piece.draw(in: &ctx); return }
+        // dim under, lit on top through a soft-edged mask (the edge travels past the end so the last letters finish lit)
+        var d = ctx; d.opacity = dim; piece.draw(in: &d)
+        let pos = p * (1 + soft)
+        let x0 = wordRect.minX + wordRect.width * max(0, min(1, pos - soft))
+        let x1 = wordRect.minX + wordRect.width * max(0, min(1, pos))
+        if x1 <= rect.minX { return }
+        var lit = ctx
+        if x0 >= rect.maxX {
+            piece.draw(in: &lit)
+            return
+        }
+        lit.clipToLayer { m in
+            m.fill(Path(rect.insetBy(dx: -2, dy: -size * 0.3)), with: .linearGradient(
+                Gradient(stops: [.init(color: .white, location: 0), .init(color: .clear, location: 1)]),
+                startPoint: CGPoint(x: x0, y: 0), endPoint: CGPoint(x: max(x1, x0 + 0.5), y: 0)))
+        }
+        piece.draw(in: &lit)
     }
 }
 
-// MARK: - A line
+private protocol GlyphDrawable { func draw(in ctx: inout GraphicsContext) }
+extension Text.Layout.Run: GlyphDrawable { fileprivate func draw(in ctx: inout GraphicsContext) { ctx.draw(self) } }
+extension Text.Layout.RunSlice: GlyphDrawable { fileprivate func draw(in ctx: inout GraphicsContext) { ctx.draw(self) } }
+
+// MARK: - A row
 
 private struct LyricRow: View, Equatable {
     let ink: Ink
     let line: LyricLine
     let size: CGFloat
     let active: Bool
-    let level: Double // the row's brightness: 1 current, .3 next, .15 others
-    let t: Double // only the current line gets the time; the others get 0 so they are not redrawn every frame
+    let level: Double // brightness: 1 current, .3 next, .15 others
+    let playing: Bool
+    let player: PlayerModel
     var onTap: () -> Void = {}
 
     static func == (a: LyricRow, b: LyricRow) -> Bool {
-        a.ink == b.ink && a.line.id == b.line.id && a.size == b.size && a.active == b.active && a.level == b.level && a.t == b.t
-    }
-
-    private func flow(_ words: [LyricWord], _ s: CGFloat) -> some View {
-        WordFlow(lineSpacing: 6) {
-            ForEach(Array(words.enumerated()), id: \.offset) { i, w in
-                let trimmed = w.w.trimmingCharacters(in: .whitespaces)
-                // a gap after a word that ends with a space, or before one that starts with a space
-                let next = i + 1 < words.count ? words[i + 1].w : ""
-                let gap: CGFloat = w.w.hasSuffix(" ") || next.hasPrefix(" ") || i == words.count - 1 ? s * 0.26 : 0
-                FillWord(ink: ink, word: w, text: trimmed, size: s, t: t)
-                    .layoutValue(key: GapKey.self, value: gap)
-            }
-        }
+        a.ink == b.ink && a.line.id == b.line.id && a.size == b.size && a.active == b.active && a.level == b.level && a.playing == b.playing
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 0) {
             if line.brk {
-                Dots(ink: ink, line: line, t: active ? t : 0, size: size)
-            } else if let words = line.words, active {
-                flow(words, size)
-                // backing vocals: smaller, under the line
-                if let back = line.back, !back.isEmpty { flow(back, size * 0.7).padding(.top, 3) }
-            } else {
-                Text(line.text)
-                    .font(.lato(size))
-                    .foregroundStyle(ink.color())
-                    .lineSpacing(6)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                if let back = line.back, !back.isEmpty {
-                    Text(back.map { $0.w }.joined().trimmingCharacters(in: .whitespaces))
-                        .font(.lato(size * 0.7)).foregroundStyle(ink.color(0.7)).padding(.top, 3)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                if active {
+                    TimelineView(.animation(minimumInterval: 1 / 30, paused: !playing)) { _ in
+                        Dots(ink: ink, line: line, t: player.now + Lyr.ahead, size: size)
+                    }
+                } else {
+                    Dots(ink: ink, line: line, t: 0, size: size)
                 }
+            } else if let words = line.words {
+                timed(words)
+            } else {
+                Text(line.text).font(.lato(size)).foregroundStyle(ink.color())
+                    .lineSpacing(6).fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -153,6 +175,36 @@ private struct LyricRow: View, Equatable {
         .animation(.timingCurve(0.22, 0.61, 0.36, 1, duration: 0.8), value: active)
         .contentShape(Rectangle())
         .onTapGesture(perform: onTap)
+    }
+
+    @ViewBuilder private func timed(_ words: [LyricWord]) -> some View {
+        let back = line.back ?? []
+        // same Text whether sung or not: only the renderer's time changes, never the layout
+        if active {
+            TimelineView(.animation(paused: !playing)) { _ in
+                face(words, back, t: player.now + Lyr.ahead)
+            }
+        } else {
+            // a row that is not sung is drawn fully lit (its level dims it), with no per-frame work
+            face(words, back, t: .infinity)
+        }
+    }
+
+    private func face(_ words: [LyricWord], _ back: [LyricWord], t: Double) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            rowText(words, base: 0, size: size)
+                .foregroundStyle(ink.color())
+                .lineSpacing(6)
+                .textRenderer(WipeRenderer(t: t, words: words, back: [], size: size))
+                .fixedSize(horizontal: false, vertical: true)
+            if !back.isEmpty {
+                rowText(back, base: 10_000, size: size * 0.7)
+                    .foregroundStyle(ink.color(0.7))
+                    .textRenderer(WipeRenderer(t: t, words: [], back: back, size: size * 0.7))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -189,59 +241,55 @@ struct LyricsView: View {
     var bottomInset: CGFloat = 200
 
     @Environment(\.ink) private var ink
+    @State private var clock = LyricsClock()
     @State private var hold = Date.distantPast
 
-    private var activeStarts: [Double] { Lyr.activeStarts(lines) }
-    private var scrollStarts: [Double] { Lyr.scrollStarts(lines) }
-
     var body: some View {
-        let starts = activeStarts
-        let sstarts = scrollStarts
+        let idx = clock.idx
+        let synced = lines.contains { $0.t != nil }
+        let playing = player.isPlaying
         ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
-                TimelineView(.animation(minimumInterval: 1.0 / 40.0)) { tl in
-                    column(starts: starts, sstarts: sstarts, proxy: proxy, date: tl.date)
+                VStack(alignment: .leading, spacing: 0) {
+                    Color.clear.frame(height: topInset)
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(lines.enumerated()), id: \.element.id) { i, l in
+                            let isActive = synced && i == idx
+                            let upcoming = synced && i > idx && i <= idx + 2
+                            LyricRow(
+                                ink: ink, line: l, size: 30,
+                                active: isActive || !synced,
+                                level: !playing ? 0.07 : (!synced ? 0.9 : (isActive ? 1 : (upcoming ? 0.3 : 0.15))),
+                                playing: playing && isActive,
+                                player: player,
+                                onTap: { if let lt = l.t { player.seek(to: max(0, lt - 0.05)); hold = .distantPast; Task { try? await Task.sleep(for: .milliseconds(60)); start() } } }
+                            )
+                            .equatable()
+                            .id(i)
+                        }
+                    }
+                    Color.clear.frame(height: bottomInset)
                 }
+                .padding(.horizontal, 18)
             }
             .simultaneousGesture(DragGesture(minimumDistance: 8).onChanged { _ in hold = Date().addingTimeInterval(3) })
+            .onChange(of: clock.sidx) { _, new in
+                guard synced, new >= 0, Date() > hold else { return }
+                withAnimation(.timingCurve(0.45, 0.05, 0.15, 1, duration: 0.8)) {
+                    proxy.scrollTo(new, anchor: UnitPoint(x: 0.5, y: 0.5))
+                }
+            }
+            .onAppear {
+                start()
+                if synced, clock.sidx >= 0 { proxy.scrollTo(clock.sidx, anchor: UnitPoint(x: 0.5, y: 0.5)) }
+            }
+            .onChange(of: lines.first?.id) { _, _ in start() }
+            .onChange(of: playing) { _, _ in start() } // a resume or a seek wakes the clock at once
+            .onDisappear { clock.stop() }
         }
     }
 
-    @ViewBuilder
-    private func column(starts: [Double], sstarts: [Double], proxy: ScrollViewProxy, date: Date) -> some View {
-        let t = player.now + Lyr.ahead
-        let idx = Lyr.indexAt(starts, t)
-        let sidx = max(idx, Lyr.indexAt(sstarts, t))
-        let synced = lines.contains { $0.t != nil }
-        VStack(alignment: .leading, spacing: 0) {
-            Color.clear.frame(height: topInset)
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(lines.enumerated()), id: \.element.id) { i, l in
-                    let isActive = synced && i == idx
-                    let upcoming = synced && i > idx && i <= idx + 2 && (l.t ?? 1e9) - t < 2.5
-                    let paused = !player.isPlaying
-                    LyricRow(
-                        ink: ink,
-                        line: l, size: 30, active: isActive || !synced,
-                        level: paused ? 0.07 : (!synced ? 0.9 : (isActive ? 1 : (upcoming ? 0.3 : 0.15))),
-                        t: isActive ? t : 0,
-                        onTap: { if let lt = l.t { player.seek(to: max(0, lt - 0.05)) } }
-                    )
-                    .equatable()
-                    .id(i)
-                }
-            }
-            Color.clear.frame(height: bottomInset)
-        }
-        .padding(.horizontal, 18)
-        .onChange(of: sidx) { _, new in
-            guard synced, new >= 0, Date() > hold else { return }
-            withAnimation(.timingCurve(0.45, 0.05, 0.15, 1, duration: 0.8)) {
-                proxy.scrollTo(new, anchor: UnitPoint(x: 0.5, y: 0.5))
-            }
-        }
-        .onAppear {
-            if synced, sidx >= 0 { proxy.scrollTo(sidx, anchor: UnitPoint(x: 0.5, y: 0.5)) }
-        }
+    private func start() {
+        clock.run(starts: Lyr.activeStarts(lines), sstarts: Lyr.scrollStarts(lines), player: player)
     }
 }

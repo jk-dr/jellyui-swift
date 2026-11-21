@@ -7,9 +7,10 @@ enum Insets {
     static var window: UIWindow? {
         UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.windows.first(where: { $0.isKeyWindow }) }.first
     }
-    static var top: CGFloat { window?.safeAreaInsets.top ?? 47 }
+    static var top: CGFloat { window?.safeAreaInsets.top ?? 62 }
     static var bottom: CGFloat { window?.safeAreaInsets.bottom ?? 34 }
-    static let bar: CGFloat = 58 // the bottom bar, above the home indicator
+    /// the native tab bar's height above the home indicator (iOS 26 floating glass bar)
+    static let bar: CGFloat = 56
 }
 
 // MARK: - Navigation
@@ -34,18 +35,44 @@ struct PlayRequest: Identifiable, Hashable {
     var id: String { itemId ?? ("tmdb-" + (tmdb ?? "")) }
 }
 
-enum RootTab: Hashable { case home, movies, shows, music, live }
+/// The three native tabs. The web's "Libraries" menu becomes one tab whose page title switches library.
+enum RootTab: Hashable { case home, libraries, settings }
+
+enum Lib: String, CaseIterable, Hashable {
+    case shows, movies, music, live
+    var title: String {
+        switch self { case .shows: "TV Shows"; case .movies: "Movies"; case .music: "Music"; case .live: "Live TV" }
+    }
+    var icon: String {
+        switch self { case .shows: "play.rectangle"; case .movies: "film"; case .music: "music.note"; case .live: "tv" }
+    }
+    static func titled(_ s: String) -> Lib? { allCases.first { $0.title == s } }
+}
 
 @Observable
 final class Nav {
     var tab: RootTab = .home
-    var path: [Route] = []
+    var lib: Lib = Lib(rawValue: UserDefaults.standard.string(forKey: "nav.lib") ?? "") ?? .music {
+        didSet { UserDefaults.standard.set(lib.rawValue, forKey: "nav.lib") }
+    }
+    var paths: [RootTab: [Route]] = [.home: [], .libraries: [], .settings: []]
     var searching = false
     var searchBase = 0
     var play: PlayRequest?
 
-    func go(_ r: Route) { FrameMonitor.event("go", String(describing: r)); path.append(r) }
-    func root(_ t: RootTab) { FrameMonitor.event("tab", String(describing: t)); path = []; tab = t }
+    /// the open tab's stack
+    var path: [Route] {
+        get { paths[tab] ?? [] }
+        set { paths[tab] = newValue }
+    }
+
+    func go(_ r: Route) {
+        FrameMonitor.event("go", String(describing: r))
+        if r == .settings { tab = .settings; paths[.settings] = []; return }
+        path.append(r)
+    }
+    /// open a library in the Libraries tab, at its root
+    func root(_ l: Lib) { FrameMonitor.event("lib", l.rawValue); lib = l; paths[.libraries] = []; tab = .libraries }
     func back() { if !path.isEmpty { path.removeLast() } }
 }
 
@@ -64,32 +91,35 @@ extension Item {
     }
 }
 
-// MARK: - The shell: header, bar, back, player bar
+// MARK: - The shell: native glass tab bar, header, back, player bar
 
 struct RootView: View {
     @Environment(PlayerModel.self) private var player
     @State private var nav = Nav()
-    @State private var visited: Set<RootTab> = [.home]
 
     var body: some View {
         @Bindable var p = player
         @Bindable var n = nav
         ZStack {
             Color.bg.ignoresSafeArea()
-            NavigationStack(path: $n.path) {
-                rootPage
-                    .toolbar(.hidden, for: .navigationBar)
-                    .navigationDestination(for: Route.self) { r in
-                        destination(r).toolbar(.hidden, for: .navigationBar)
-                    }
+            TabView(selection: $n.tab) {
+                Tab("Home", systemImage: "house.fill", value: RootTab.home) {
+                    TabStack(tab: .home) { HomeScreen() }
+                }
+                Tab("Libraries", systemImage: "books.vertical.fill", value: RootTab.libraries) {
+                    TabStack(tab: .libraries) { LibraryRoot() }
+                }
+                Tab("Settings", systemImage: "gearshape.fill", value: RootTab.settings) {
+                    TabStack(tab: .settings) { SettingsScreen() }
+                }
             }
-            ShellOverlay()
-            if p.showFull { NowPlaying().zIndex(20) }
+            .tint(Color.pink)
             if nav.searching {
                 // a result opens over the search; Back returns to it (the search stays where it was)
                 SearchScreen().transition(.identity).zIndex(10)
                     .opacity(nav.path.count == nav.searchBase ? 1 : 0).allowsHitTesting(nav.path.count == nav.searchBase)
             }
+            if p.showFull { NowPlaying().zIndex(20) }
         }
         .environment(nav)
         .fullScreenCover(item: $n.play) { VideoScreen(request: $0) }
@@ -97,30 +127,40 @@ struct RootView: View {
         .task { await Tour.apply(nav: nav, player: player) }
         #endif
     }
+}
 
-    @ViewBuilder private var rootPage: some View {
-        ZStack {
-            ForEach([RootTab.home, .movies, .shows, .music, .live], id: \.self) { t in
-                if visited.contains(t) || nav.tab == t {
-                    page(t).opacity(nav.tab == t ? 1 : 0).allowsHitTesting(nav.tab == t).zIndex(nav.tab == t ? 1 : 0)
+/// One tab: its own navigation stack, the header and Back pill over it, and the player bar above the tab bar.
+private struct TabStack<Root: View>: View {
+    let tab: RootTab
+    @ViewBuilder var root: () -> Root
+    @Environment(Nav.self) private var nav
+    @Environment(PlayerModel.self) private var player
+
+    var body: some View {
+        let path = Binding<[Route]>(get: { nav.paths[tab] ?? [] }, set: { nav.paths[tab] = $0 })
+        NavigationStack(path: path) {
+            root()
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationDestination(for: Route.self) { r in
+                    Destination(route: r).toolbar(.hidden, for: .navigationBar)
                 }
+        }
+        .overlay(alignment: .top) {
+            ZStack(alignment: .topLeading) {
+                HeaderBar()
+                if !(nav.paths[tab] ?? []).isEmpty { BackPill() }
             }
         }
-        .onChange(of: nav.tab) { _, t in visited.insert(t) }
-    }
-
-    @ViewBuilder private func page(_ t: RootTab) -> some View {
-        switch t {
-        case .home: HomeScreen()
-        case .movies: LibraryListScreen(kind: .movies)
-        case .shows: LibraryListScreen(kind: .shows)
-        case .music: MusicScreen()
-        case .live: LiveScreen()
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if player.current != nil { MiniPlayer().padding(.bottom, 6) }
         }
     }
+}
 
-    @ViewBuilder private func destination(_ r: Route) -> some View {
-        switch r {
+private struct Destination: View {
+    let route: Route
+    var body: some View {
+        switch route {
         case .movie(let id): DetailScreen(id: id, show: false)
         case .show(let id): DetailScreen(id: id, show: true)
         case .album(let id): ListScreen(id: id, kind: .album)
@@ -134,24 +174,30 @@ struct RootView: View {
     }
 }
 
-struct ShellOverlay: View {
+/// The Libraries tab: the library last chosen (its title is a native menu to switch).
+/// Every library stays mounted once visited, so switching back is instant and keeps its scroll.
+struct LibraryRoot: View {
     @Environment(Nav.self) private var nav
-    @Environment(PlayerModel.self) private var player
+    @State private var visited: Set<Lib> = []
 
     var body: some View {
         ZStack {
-            VStack(spacing: 0) {
-                HeaderBar()
-                Spacer(minLength: 0)
+            ForEach(Lib.allCases, id: \.self) { l in
+                if visited.contains(l) || nav.lib == l {
+                    page(l).opacity(nav.lib == l ? 1 : 0).allowsHitTesting(nav.lib == l).zIndex(nav.lib == l ? 1 : 0)
+                }
             }
-            .ignoresSafeArea()
-            if !nav.path.isEmpty { BackPill().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading) }
-            VStack(spacing: 0) {
-                Spacer(minLength: 0)
-                MiniPlayer()
-                BottomBar()
-            }
-            .ignoresSafeArea(edges: .bottom)
+        }
+        .onAppear { visited.insert(nav.lib) }
+        .onChange(of: nav.lib) { _, l in visited.insert(l) }
+    }
+
+    @ViewBuilder private func page(_ l: Lib) -> some View {
+        switch l {
+        case .movies: LibraryListScreen(kind: .movies)
+        case .shows: LibraryListScreen(kind: .shows)
+        case .music: MusicScreen()
+        case .live: LiveScreen()
         }
     }
 }
@@ -175,13 +221,14 @@ struct HeaderBar: View {
 
     var body: some View {
         let top = Insets.top
+        let back = !nav.path.isEmpty
         ZStack(alignment: .top) {
             LinearGradient(stops: [
                 .init(color: Color(hex: 0x0c0c0e, alpha: 1), location: 0), .init(color: Color(hex: 0x0c0c0e, alpha: 0.97), location: 0.35),
                 .init(color: Color(hex: 0x0c0c0e, alpha: 0.8), location: 0.55), .init(color: Color(hex: 0x0c0c0e, alpha: 0.45), location: 0.75),
                 .init(color: Color(hex: 0x0c0c0e, alpha: 0.15), location: 0.9), .init(color: Color(hex: 0x0c0c0e, alpha: 0), location: 1),
             ], startPoint: .top, endPoint: .bottom)
-            .frame(height: 120 + top).allowsHitTesting(false)
+            .frame(height: 96 + top).allowsHitTesting(false)
             Button { nav.searchBase = nav.path.count; withAnimation(.easeInOut(duration: 0.38)) { nav.searching = true } } label: {
                 ZStack {
                     SVGPath(d: "M24 14a10 10 0 11-20 0 10 10 0 0120 0z M22 22l7 7", box: 32)
@@ -194,8 +241,11 @@ struct HeaderBar: View {
                 .overlay(Capsule().stroke(Color(hex: 0x2a2a2d), lineWidth: 1))
             }
             .buttonStyle(.plain)
-            .padding(.horizontal, 16).padding(.top, 10 + top)
+            // on a pushed page the web puts the round back button left of the search bar
+            .padding(.leading, back ? 16 + 44 + 10 : 16).padding(.trailing, 16).padding(.top, 8 + top)
+            .animation(.easeOut(duration: 0.2), value: back)
         }
+        .ignoresSafeArea(edges: .top)
         .task {
             if let v = try? await Api.views() { types = v.compactMap { $0.collectionType } }
         }
@@ -224,97 +274,69 @@ private struct HintText: View {
     }
 }
 
-// MARK: Back pill
+// MARK: Back button
 
+/// The web's round back button: a 44 pt circle left of the search bar on pushed pages.
 struct BackPill: View {
     @Environment(Nav.self) private var nav
     var body: some View {
         Button { nav.back() } label: {
-            HStack(spacing: 6) {
-                Icon(name: "back", size: 20, color: .pink)
-                Text("Back").font(.q(15)).foregroundStyle(Color.pink)
-            }
-            .padding(.vertical, 6).padding(.leading, 10).padding(.trailing, 14)
-            .background(Color(hex: 0x16161a), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            Icon(name: "back", size: 20, color: .pink)
+                .frame(width: 44, height: 44)
+                .background(Color(hex: 0x1a1a1c), in: Circle())
+                .overlay(Circle().stroke(Color(hex: 0x2a2a2d), lineWidth: 1))
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .padding(.leading, 16).padding(.top, 84 + Insets.top)
-    }
-}
-
-// MARK: Bottom bar
-
-struct BottomBar: View {
-    @Environment(Nav.self) private var nav
-
-    private var on: String {
-        if nav.path.last == .settings { return "settings" }
-        if !nav.path.isEmpty { return "" }
-        switch nav.tab {
-        case .home: return "home"
-        default: return "libs"
-        }
-    }
-
-    var body: some View {
-        HStack(spacing: 0) {
-            item("home", "Home", "home") { nav.root(.home) }
-            Menu {
-                Button { nav.root(.shows) } label: { Label("TV Shows", systemImage: "play.rectangle") }
-                Button { nav.root(.movies) } label: { Label("Movies", systemImage: "film") }
-                Button { nav.root(.music) } label: { Label("Music", systemImage: "music.note") }
-                Button { nav.root(.live) } label: { Label("Live TV", systemImage: "tv") }
-            } label: { face("libs", "Libraries", "libraries") }
-            item("settings", "Settings", "settings") { if nav.path.last != .settings { nav.go(.settings) } }
-        }
-        .padding(.horizontal, 8)
-        .padding(.bottom, Insets.bottom)
-        .frame(height: Insets.bar + Insets.bottom)
-        .background(.ultraThinMaterial.opacity(0.9))
-        .background(Color(red: 18 / 255, green: 18 / 255, blue: 20 / 255).opacity(0.9))
-        .overlay(alignment: .top) { Rectangle().fill(Color.white.opacity(0.07)).frame(height: 0.5) }
-    }
-
-    private func item(_ key: String, _ label: String, _ icon: String, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) { face(key, label, icon) }.buttonStyle(.plain)
-    }
-
-    private func face(_ key: String, _ label: String, _ icon: String) -> some View {
-        let col: Color = on == key ? .pink : Color(hex: 0x9a9aa0)
-        return VStack(spacing: 2) {
-            Icon(name: icon, size: 24, color: col)
-            Text(label).font(.q(11)).foregroundStyle(col)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .contentShape(Rectangle())
+        .accessibilityLabel("Back")
+        .padding(.leading, 16).padding(.top, 10 + Insets.top)
+        .ignoresSafeArea(edges: .top)
     }
 }
 
 // MARK: - Page scaffolding
 
-/// A scrolling page that starts under the header and ends above the bar and the player bar.
+/// A scrolling page that starts under the header. The bottom follows the safe area (tab bar and player bar).
 struct Page<Content: View>: View {
     var refresh: (() async -> Void)?
     @ViewBuilder var content: () -> Content
-    @Environment(PlayerModel.self) private var player
 
     var body: some View {
         let scroll = ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 0) {
                 Color.clear.frame(height: Insets.top)
                 content()
-                Color.clear.frame(height: Insets.bar + Insets.bottom + (player.current != nil ? 156 : 0) + 16)
+                Color.clear.frame(height: 16)
             }
         }
         Group {
             if let refresh { scroll.refreshable { await refresh() } } else { scroll }
         }
-        .ignoresSafeArea()
+        .ignoresSafeArea(edges: .top)
         .background(Color.bg.ignoresSafeArea())
     }
 }
 
-extension UINavigationController: UIGestureRecognizerDelegate {
+/// The library page title. On the Libraries tab it is a native menu that switches library.
+struct LibrarySwitcher: View {
+    let lib: Lib
+    @Environment(Nav.self) private var nav
+    var body: some View {
+        Menu {
+            Picker("Library", selection: Binding(get: { nav.lib }, set: { nav.root($0) })) {
+                ForEach(Lib.allCases, id: \.self) { l in Label(l.title, systemImage: l.icon).tag(l) }
+            }
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(lib.title).font(.q(36)).foregroundStyle(Color.pink)
+                Image(systemName: "chevron.down").font(.system(size: 16, weight: .semibold)).foregroundStyle(Color.pink.opacity(0.7))
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+extension UINavigationController: @retroactive UIGestureRecognizerDelegate {
     override open func viewDidLoad() {
         super.viewDidLoad()
         interactivePopGestureRecognizer?.delegate = self
