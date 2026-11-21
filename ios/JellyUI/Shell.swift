@@ -93,6 +93,9 @@ struct RootView: View {
         }
         .environment(nav)
         .fullScreenCover(item: $n.play) { VideoScreen(request: $0) }
+        #if DEBUG
+        .task { await Tour.apply(nav: nav, player: player) }
+        #endif
     }
 
     @ViewBuilder private var rootPage: some View {

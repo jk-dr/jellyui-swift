@@ -23,6 +23,9 @@ struct JellyUIApp: App {
             .preferredColorScheme(.dark)
             .tint(Color.pink)
             .background(Color.bg.ignoresSafeArea())
+            #if DEBUG
+            .task { await Tour.signIn() }
+            #endif
         }
     }
 }

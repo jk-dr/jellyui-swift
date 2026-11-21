@@ -1,0 +1,99 @@
+name: Sim Shots
+
+# Builds the app for the iOS Simulator, opens each screen through the DEBUG-only Tour
+# (DebugTour.swift) and saves a screenshot of it. Credentials come from repo secrets.
+on:
+  push:
+    branches: [feat/native-port]
+    paths: ['ios/**', '.github/workflows/sim-shots.yml']
+  workflow_dispatch:
+    inputs:
+      routes:
+        description: 'Space-separated routes (blank = all)'
+        required: false
+        default: ''
+
+concurrency:
+  group: sim-shots-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shots:
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      ROUTES: ${{ inputs.routes != '' && inputs.routes || 'home movies shows music live settings search movie show album artist playlist mini nowplaying queue' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode
+        run: |
+          X=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$X" ]; then sudo xcode-select -s "$X"; fi
+          xcodebuild -version
+
+      - name: Generate project
+        working-directory: ios
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          xcodegen generate
+
+      - name: Pick simulator
+        run: |
+          UDID=$(python3 - <<'EOF'
+          import json, subprocess
+          d = json.loads(subprocess.check_output(["xcrun", "simctl", "list", "devices", "available", "-j"]))["devices"]
+          best = None
+          for rt, devs in d.items():
+              if "iOS" not in rt: continue
+              ver = tuple(int(p) for p in rt.split("iOS-")[-1].split("-") if p.isdigit())
+              for x in devs:
+                  n = x["name"]
+                  if n.startswith("iPhone") and "Pro" in n and "Max" not in n:
+                      if best is None or ver > best[0]: best = (ver, x["udid"], n)
+          print(best[1])
+          EOF
+          )
+          echo "UDID=$UDID" >> "$GITHUB_ENV"
+          xcrun simctl list devices | grep "$UDID"
+
+      - name: Build (Debug, simulator)
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild -project JellyUI.xcodeproj -scheme JellyUI -configuration Debug \
+            -destination "id=$UDID" -derivedDataPath build CODE_SIGNING_ALLOWED=NO build 2>&1 \
+            | tee build.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" build.log
+
+      - name: Screenshots
+        env:
+          SIMCTL_CHILD_JUI_SERVER: ${{ secrets.JF_URL }}
+          SIMCTL_CHILD_JUI_USER: ${{ secrets.JF_USER }}
+          SIMCTL_CHILD_JUI_PASS: ${{ secrets.JF_PASS }}
+        run: |
+          mkdir -p shots logs
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl status_bar "$UDID" override --time 9:41 --batteryState charged --batteryLevel 100 --cellularBars 4 || true
+          xcrun simctl install "$UDID" ios/build/Build/Products/Debug-iphonesimulator/JellyUI.app
+          first=1
+          for r in $ROUTES; do
+            SIMCTL_CHILD_JUI_ROUTE=$r xcrun simctl launch --terminate-running-process \
+              --stdout="$PWD/logs/$r.out" --stderr="$PWD/logs/$r.err" "$UDID" app.jellyui.swift || echo "launch failed: $r"
+            if [ $first = 1 ]; then sleep 20; first=0; else sleep 11; fi
+            xcrun simctl io "$UDID" screenshot "shots/$r.png" || true
+            if ! xcrun simctl spawn "$UDID" launchctl list | grep -q app.jellyui.swift; then echo "CRASHED: $r" | tee -a logs/crashes.txt; fi
+          done
+          ls -la shots
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shots
+          path: |
+            shots/
+            logs/
+            ios/build.log
+          retention-days: 7
