@@ -281,7 +281,8 @@ private struct LyricRow: View, Equatable {
         .blur(radius: soft ? size * 0.1 : 0)
         .animation(soft ? .easeInOut(duration: 0.7).delay(0.84) : .easeOut(duration: 0.25), value: soft)
         .scaleEffect(active && !line.brk ? 1.08 : 1, anchor: .leading)
-        .animation(.timingCurve(0.45, 0.05, 0.15, 1, duration: 0.8), value: active)
+        // growing: done in 0.5 s, so the line is at full size (it turns current 0.65 s ahead) before its first word is sung; shrinking keeps the slow 0.8 s
+        .animation(active ? .timingCurve(0.25, 0.1, 0.25, 1, duration: 0.5) : .timingCurve(0.45, 0.05, 0.15, 1, duration: 0.8), value: active)
         .contentShape(Rectangle())
         .onTapGesture(perform: onTap)
     }
