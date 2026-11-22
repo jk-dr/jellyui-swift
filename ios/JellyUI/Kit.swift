@@ -492,8 +492,10 @@ struct HRowSkeleton: View {
     var height: CGFloat
     var width: CGFloat
     var pad: CGFloat = 11
+    var gap: CGFloat = 12
+    var radius: CGFloat = 12 // the same corners as the cards it stands in for
     var body: some View {
-        HStack(spacing: 12) { ForEach(0..<5, id: \.self) { _ in Skeleton(width: width, height: height, radius: 9.6) } }
+        HStack(spacing: gap) { ForEach(0..<5, id: \.self) { _ in Skeleton(width: width, height: height, radius: radius) } }
             .padding(.leading, pad).frame(height: height, alignment: .leading).padding(.top, 6).clipped()
     }
 }

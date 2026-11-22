@@ -185,6 +185,9 @@ struct EqBars: View {
     }
 }
 
+/// The playlist the app keeps for favourite songs (named Favourites on the server)
+func isFavouritesList(_ it: Item) -> Bool { it.type == "Playlist" && it.title.caseInsensitiveCompare("Favourites") == .orderedSame }
+
 /// A song row, as the web draws it on a phone (.trk): cover, title over "artist • length", a heart when it is a favourite, and a ⋮ button.
 struct SongRow: View {
     let it: Item
@@ -251,11 +254,11 @@ struct MusicTile: View {
     var body: some View {
         let artist = it.type == "MusicArtist"
         let sub = subtitle
-        let fav = it.id == "favourites"
+        let fav = it.id == "favourites" || isFavouritesList(it)
         Button { nav.go(it.route) } label: {
             ZStack(alignment: .bottomLeading) {
                 Color(hex: 0x181818)
-                if let u = Pic.poster(it, h: 320) { Pic_(u, radius: 0) }
+                if !fav, let u = Pic.poster(it, h: 320) { Pic_(u, radius: 0) }
                 else if fav {
                     LinearGradient(colors: [Color(hex: 0x6b1f2e), Color(hex: 0x2a0d14)], startPoint: .topLeading, endPoint: .bottomTrailing)
                     Icon(name: "heart", size: size * 0.42, color: Color(hex: 0xff8597)).frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -402,6 +405,7 @@ struct MusicScreen: View {
     @State private var mixes: Plugin.MixesData? = Mem.stale("m.mixes")
     @State private var quick: [Item] = []
     @State private var downloads: [Item] = []
+    @State private var enjoy: [Item] = []
     @State private var toast = ""
     @State private var loadedOnce = false
 
@@ -456,6 +460,15 @@ struct MusicScreen: View {
                 HRow(height: 150, pad: 28) { ForEach(recent) { MusicTile(it: $0) } }
             }
 
+            // the web's "You'll Enjoy": the songs played most lately (the server's short-term score), between Recent Albums and Mixes
+            if !enjoy.isEmpty {
+                H2("You’ll Enjoy").padding(.top, -6)
+                RowColumns(songs: enjoy, colW: width - 56) { idx in
+                    pm.play(enjoy, at: idx, more: { await Api.randomSongs(50) })
+                }
+                .padding(.top, 20)
+            }
+
             if let ms = mixes?.mixes, !ms.isEmpty {
                 H2("Mixes").padding(.top, -6)
                 HRow(height: 150, pad: 28) {
@@ -482,12 +495,25 @@ struct MusicScreen: View {
 
     // MARK: data
 
+    /// The songs with the highest short-term score, in the server's order (at most 25)
+    private static func enjoyed() async -> [Item] {
+        struct Scores: Decodable { struct E: Decodable { var id: String }; var items: [E]? }
+        guard let r: Scores = try? await Api.get("/JellyUI/ShortScores", ["limit": 80], quiet: true) else { return [] }
+        let ids = Array((r.items ?? []).map(\.id).prefix(40))
+        guard !ids.isEmpty, let got = try? await Api.items(["Ids": ids.joined(separator: ","), "Fields": "AlbumArtist,RunTimeTicks", "EnableUserData": true]) else { return [] }
+        let norm = { (s: String) in s.replacingOccurrences(of: "-", with: "").lowercased() }
+        var by: [String: Item] = [:]
+        for t in got { by[norm(t.id)] = t }
+        return Array(ids.compactMap { by[norm($0)] }.prefix(25))
+    }
+
     private func loadTop() async {
         async let p = try? Api.items(["IncludeItemTypes": "Playlist", "Recursive": true, "SortBy": "SortName", "Limit": 30, "Fields": "ChildCount"])
         async let fa = try? Api.items(["IncludeItemTypes": "MusicAlbum", "Recursive": true, "Filters": "IsFavorite", "SortBy": "SortName", "Limit": 60])
         async let r = Api.recentAlbums()
         async let m = Plugin.mixes()
         async let qk = Api.randomSongs(24)
+        async let en = Self.enjoyed()
         async let dl = try? Api.songs(["SortBy": "DateCreated", "SortOrder": "Descending", "Limit": 25])
         if let p = await p { playlists = p; Mem.set("m.pl", p) }
         if let fa = await fa { favAlbums = fa; Mem.set("m.fa", fa) }
@@ -495,6 +521,7 @@ struct MusicScreen: View {
         mixes = await m; if let mixes { Mem.set("m.mixes", mixes) }
         quick = await qk
         if let dl = await dl { downloads = dl.items }
+        enjoy = await en
         loadedOnce = true
     }
 
@@ -576,7 +603,12 @@ struct ListScreen: View {
             if let head {
                 VStack(alignment: .leading, spacing: 0) {
                     Group {
-                        if let u = Pic.poster(head, h: 700) { Pic_(u, radius: 0) }
+                        // the Favourites playlist (made by the app) always has the red heart, never a cover from its songs
+                        if id == "favourites" || isFavouritesList(head) {
+                            LinearGradient(colors: [Color(hex: 0x6b1f2e), Color(hex: 0x2a0d14)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                                .overlay(Icon(name: "heart", size: artW * 0.3, color: Color(hex: 0xff8597)))
+                        }
+                        else if let u = Pic.poster(head, h: 700) { Pic_(u, radius: 0) }
                         else if id == "favourites" {
                             LinearGradient(colors: [Color(hex: 0x6b1f2e), Color(hex: 0x2a0d14)], startPoint: .topLeading, endPoint: .bottomTrailing)
                                 .overlay(Icon(name: "heart", size: artW * 0.3, color: Color(hex: 0xff8597)))

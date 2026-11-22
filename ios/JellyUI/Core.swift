@@ -369,11 +369,12 @@ extension Item {
 
 enum Pic {
     private static func img(_ id: String, _ kind: String, h: Int, tag: String?) -> URL? {
-        Api.url("/Items/\(id)/Images/\(kind)", ["maxHeight": h, "quality": 85, "tag": tag])
+        // a small picture (a row's thumbnail) is asked for at a lower quality: a much smaller file, quicker to load
+        Api.url("/Items/\(id)/Images/\(kind)", ["maxHeight": h, "quality": h <= 200 ? 70 : 85, "tag": tag])
     }
 
     static func poster(_ it: Item, h: Int = 450) -> URL? {
-        if it.type == "Audio", let a = it.albumId { return img(a, "Primary", h: h, tag: it.albumPrimaryImageTag) }
+        // a song's own picture first (many singles in an album have their own); the album's when it has none
         if let t = it.imageTag("Primary") { return img(it.id, "Primary", h: h, tag: t) }
         if let t = it.primaryImageTag { return img(it.itemId ?? it.id, "Primary", h: h, tag: t) }
         if let s = it.seriesId, let t = it.seriesPrimaryImageTag { return img(s, "Primary", h: h, tag: t) }
@@ -388,6 +389,9 @@ enum Pic {
         if let t = it.imageTag("Thumb") { return img(it.id, "Thumb", h: h, tag: t) }
         return poster(it, h: h)
     }
+
+    /// a small square thumbnail for rows and lists (the size it is drawn at, at 3x)
+    static func thumb(_ it: Item, _ px: Int = 132) -> URL? { square(it, px) }
 
     static func square(_ it: Item, _ px: Int) -> URL? {
         guard let u = poster(it, h: px) else { return nil }

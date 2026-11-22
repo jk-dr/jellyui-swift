@@ -126,9 +126,10 @@ struct SearchScreen: View {
         if !res.songs.isEmpty {
             let n = expanded.contains("Songs") ? min(res.songs.count, 40) : min(res.songs.count, per)
             h3("Songs")
+            // the same song rows as everywhere else: the menu (⋮ and held), favourite, queue, playlist, album
             ForEach(0..<n, id: \.self) { i in
-                let s = res.songs[i]
-                row(s, s.artistLine.isEmpty ? "Song" : s.artistLine) { remember(); pm.play(res.songs, at: i) }
+                SongRow(it: res.songs[i], index: i, showIndex: false) { idx in remember(); pm.play(res.songs, at: idx) }
+                    .padding(.horizontal, -16)
             }
             if res.songs.count > n { moreRow("Show \(res.songs.count - n) more") { _ = expanded.insert("Songs") } }
         }

@@ -91,8 +91,18 @@ struct HomeScreen: View {
                     HomePills(options: availKinds.map { (value: $0.0, label: $0.1) }, value: Binding(get: { activeKind }, set: { svcKind = $0 }), top: 10)
                     HomeRow(height: 72) { ForEach(svcList) { ServiceLogo(s: $0) } }.padding(.top, 2)
                 } else if h == nil && !loaded {
+                    // stand-ins with the real sections' sizes, so nothing moves when they arrive
                     HomeHeader("Explore Services", top: showReqs ? 18 : 36)
+                    Skeleton(width: 270, height: 40, radius: 20).padding(.leading, 28).padding(.top, 10)
                     HRowSkeleton(height: 72, width: 72, pad: 28).padding(.vertical, 6)
+                    if settings.homeGenres {
+                        HomeHeader("Genres")
+                        HRowSkeleton(height: 84, width: 210, pad: 28, gap: 10).padding(.vertical, 6)
+                    }
+                    if settings.homeTrending {
+                        Skeleton(width: 160, height: 26, radius: 8).padding(.leading, 28).padding(.top, 36)
+                        HRowSkeleton(height: 225, width: 150, pad: 28).padding(.vertical, 6)
+                    }
                 }
 
                 if settings.homeGenres, h?.ready == true, let g = h?.genres, !g.isEmpty {

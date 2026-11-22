@@ -87,16 +87,18 @@ struct MiniPlayer: View {
                 PlayBar(duration: pm.duration, ink: Ink(r: 248, g: 204, b: 204, a: 1), compact: true)
             }
             .padding(.leading, 13).padding(.trailing, 10).padding(.top, 10).padding(.bottom, 6)
-            .background(Color(hex: 0x1c1c1f).opacity(0.72), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.06), lineWidth: 0.5))
+            // Liquid Glass, like the tab bar under it (the web's corner: 20)
+            .glassEffect(.regular.tint(Color(hex: 0x1c1c1f).opacity(0.35)).interactive(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .padding(.horizontal, 12)
             .contextMenu {
                 Button { Favs.toggle(it) } label: { Label(fav ? "Remove from Favourites" : "Favourite", systemImage: fav ? "heart.slash" : "heart") }
                 Button { open() } label: { Label("Lyrics and full screen", systemImage: "music.quarternote.3") }
                 Button(role: .destructive) { closeAsk = true } label: { Label("Close playback", systemImage: "xmark") }
             }
-            .gesture(DragGesture(minimumDistance: 10).onEnded { v in if v.translation.height < -40 && abs(v.translation.width) < 24 { open() } })
+            // a swipe up from anywhere on the bar (its buttons too) opens the full screen
+            .simultaneousGesture(DragGesture(minimumDistance: 10).onEnded { v in
+                if v.translation.height < -36 && abs(v.translation.width) < abs(v.translation.height) { open() }
+            })
             .alert("Close playback?", isPresented: $closeAsk) {
                 Button("Cancel", role: .cancel) {}
                 Button("Close", role: .destructive) { pm.stop() }
@@ -137,9 +139,10 @@ struct NowPlaying: View {
     @Environment(PlayerModel.self) private var pm
     private let settings = Settings.shared
     @State private var sheetY: CGFloat = UIScreen.main.bounds.height
-    @State private var qY: CGFloat = UIScreen.main.bounds.height
-    @State private var qOpen = false
-    @State private var mode = 0 // 0 undecided, 1 closing the sheet, 2 opening the queue
+    /// the queue: 0 closed, 1 small (the controls risen, the list under them), 2 full (the list fills the screen); in between while a finger moves it
+    @State private var qp: CGFloat = 0
+    @State private var qBase: CGFloat = 0 // the level when the drag began
+    @State private var mode = 0 // 0 undecided, 1 closing the sheet, 2 moving the queue
     @State private var edge = false
     @State private var gestureStart: CGPoint? // where the drag under way began; nil between drags
     @State private var early = false
@@ -152,10 +155,15 @@ struct NowPlaying: View {
     @State private var look = CoverLook()
     @State private var leaving = false
 
+    private var qg: QGeo { QGeo(H: UIScreen.main.bounds.height, top: Insets.top, bottom: Insets.bottom) }
+
     var body: some View {
         let H = UIScreen.main.bounds.height
         let top = Insets.top, bottom = Insets.bottom
         let it = pm.current
+        let g = qg
+        let L = g.lifted(qp)
+        let up = max(0, L - g.lift) // how far past the small queue: the header, lyrics and controls ride up with the list
         let artist = it?.artistLine ?? ""
         let showLyrics = !coverOnly && !settings.lyricsHidden && (loading || !lines.isEmpty)
         let noLyrics = !loading && lines.isEmpty
@@ -180,6 +188,14 @@ struct NowPlaying: View {
                     if loading && lines.isEmpty { Spinner() }
                 }
                 .padding(.top, top + 76).padding(.bottom, 222 + bottom).padding(.trailing, 46)
+                .mask(alignment: .top) {
+                    VStack(spacing: 0) {
+                        Rectangle()
+                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 0.2 * min(L, g.lift))
+                        Color.clear.frame(height: min(L, g.lift))
+                    }
+                }
+                .offset(y: -up).opacity(qp > 1 ? Double(2 - qp) : 1)
                 // the strip down the right edge closes the screen from over the lyrics
                 Color.clear.contentShape(Rectangle()).frame(width: 46).frame(maxWidth: .infinity, alignment: .trailing)
                     .padding(.top, top + 76).padding(.bottom, 222 + bottom).gesture(zone(H, noQueue: true))
@@ -193,6 +209,8 @@ struct NowPlaying: View {
                 }
                 .padding(.horizontal, 18).frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.top, top + 64).padding(.bottom, 222 + bottom)
+                .scaleEffect(1 - 0.28 * min(1, qp), anchor: .top) // the web's: the cover shrinks over the small queue
+                .offset(y: -up)
                 .contentShape(Rectangle()).gesture(zone(H))
             }
 
@@ -211,13 +229,30 @@ struct NowPlaying: View {
                 // only the header row itself catches touches (a full-screen hit area here used to swallow taps on the lyrics)
                 .contentShape(Rectangle()).gesture(zone(H))
                 .frame(maxHeight: .infinity, alignment: .top).padding(.top, top + 8)
+                .offset(y: -up)
             }
 
-            controls(it, noLyrics: noLyrics, bottom: bottom, H: H)
+            // the fade under the risen controls (the cover's bottom colour), half strength
+            if qp > 0 {
+                let c = look.bottom
+                LinearGradient(stops: [.init(color: Color(red: c.0 * 0.62 / 255, green: c.1 * 0.62 / 255, blue: c.2 * 0.62 / 255).opacity(0), location: 0),
+                                       .init(color: Color(red: c.0 * 0.62 / 255, green: c.1 * 0.62 / 255, blue: c.2 * 0.62 / 255), location: 150 / (g.lift + 294 + bottom))],
+                               startPoint: .top, endPoint: .bottom)
+                    .frame(height: g.lift + 294 + bottom).frame(maxHeight: .infinity, alignment: .bottom)
+                    .opacity(0.5 * Double(min(1, qp))).offset(y: 24 * (1 - min(1, qp)))
+                    .allowsHitTesting(false)
+            }
 
-            // the queue: drags up from the bottom with the finger
-            QueuePanel(close: { toggleQueue(false, H) }, zone: zone(H, noQueue: true), top: top, bottom: bottom)
-                .offset(y: qY).allowsHitTesting(qOpen || qY < H).opacity(late ? 1 : 0)
+            // the queue: always as tall as the full queue, moved (never resized) with the finger
+            QueuePanel(level: qp, set: { setQ($0) }, zone: zone(H, noQueue: true), top: top, bottom: bottom)
+                .frame(height: H - g.qtop).frame(maxHeight: .infinity, alignment: .bottom)
+                .offset(y: g.listY(qp))
+                .opacity(late ? Double(min(1, qp * 5)) : 0)
+                .allowsHitTesting(qp > 0.5)
+
+            controls(it, noLyrics: noLyrics, bottom: bottom, H: H)
+                .offset(y: -L)
+                .allowsHitTesting(qp < 1.5)
         }
         .environment(\.ink, ink)
         .frame(width: UIScreen.main.bounds.width, height: H)
@@ -268,35 +303,39 @@ struct NowPlaying: View {
         Task { try? await Task.sleep(nanoseconds: 310_000_000); pm.showFull = false }
     }
 
-    private func toggleQueue(_ open: Bool, _ H: CGFloat) {
-        qOpen = open
-        withAnimation(open ? .timingCurve(0.2, 0.7, 0.3, 1, duration: 0.18) : .timingCurve(0.22, 0.61, 0.36, 1, duration: 0.26)) { qY = open ? 0 : H }
+    /// the web's --qease: .27 s, cubic-bezier(.5, 0, .2, 1)
+    private func setQ(_ level: CGFloat) {
+        withAnimation(.timingCurve(0.5, 0, 0.2, 1, duration: 0.27)) { qp = level }
+        qBase = level
     }
 
-    /// A swipe DOWN drags the whole screen down (and away when let go past 90 px, or flicked), a swipe UP drags the queue up from the bottom.
+    /// A swipe DOWN drags the whole screen down (queue closed) or lowers the queue a level; a swipe UP raises the queue a level.
+    /// Everything follows the finger; letting go settles on the nearest level (a flick goes on to the next one).
     private func zone(_ H: CGFloat, noQueue: Bool = false) -> AnyGesture<DragGesture.Value> {
         AnyGesture(DragGesture(minimumDistance: 8, coordinateSpace: .global)
             .onChanged { v in
                 // a new drag has a new start point. A cancelled drag never reaches onEnded, so this is what clears its mode.
-                if v.startLocation != gestureStart { gestureStart = v.startLocation; mode = 0; edge = v.startLocation.y > H - 44 }
+                if v.startLocation != gestureStart { gestureStart = v.startLocation; mode = 0; edge = v.startLocation.y > H - 44; qBase = qp.rounded() }
                 let dy = v.translation.height
                 if abs(v.translation.width) > abs(dy) * 1.5 && mode == 0 { return }
-                if qOpen { if dy > 0 { qY = dy }; return }
                 if mode == 0 {
-                    if dy > 0 { mode = 1 } else if !edge && !noQueue { mode = 2 } else { return }
+                    if dy > 0 && qBase == 0 { mode = 1 }
+                    else if dy < 0 && (edge || (noQueue && qBase == 0)) { return }
+                    else { mode = 2 }
                 }
-                if mode == 1 { sheetY = max(0, dy) } else { qY = max(0, H + dy) }
+                if mode == 1 { sheetY = max(0, dy) }
+                else { qp = qg.level(qg.lifted(qBase) - dy) }
             }
             .onEnded { v in
                 let dy = v.translation.height
                 let flick = abs(v.predictedEndTranslation.height - dy) > 90
                 gestureStart = nil
-                if qOpen {
-                    if dy > FAR || (flick && dy > 30) { toggleQueue(false, H) } else { withAnimation(SHEET) { qY = 0 } }
-                } else if mode == 1 {
+                if mode == 1 {
                     if dy > FAR || (flick && dy > 30) { requestClose() } else { withAnimation(SHEET) { sheetY = 0 } }
                 } else if mode == 2 {
-                    if -dy > FAR || (flick && -dy > 30) { toggleQueue(true, H) } else { withAnimation(SHEET) { qY = H } }
+                    var to = qp.rounded()
+                    if flick { to = dy < 0 ? min(2, qBase + 1) : max(0, qBase - 1) }
+                    setQ(to)
                 }
                 mode = 0
             })
@@ -313,12 +352,13 @@ struct NowPlaying: View {
                     fs(pm.isPlaying || pm.loading ? "pause" : "play", pm.isPlaying || pm.loading ? "Pause" : "Play", main: true) { pm.toggle() }
                     fs("skipNext", "Next") { pm.nextSong() }
                 }
+                .padding(.horizontal, 38) // the web's grid: the three sit over columns 2-7, centred over the four below
                 HStack(spacing: 0) {
                     // the lyrics button (new in the Swift app): shows or hides the lyrics
                     cell { Button { if !noLyrics { withAnimation(.easeInOut(duration: 0.3)) { coverOnly.toggle() } } } label: {
                         SVGPath(d: "M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z").fill(ink.color()).frame(width: 22, height: 22).frame(width: 46, height: 46)
                     }.buttonStyle(.plain).opacity(noLyrics ? 0.3 : 1).accessibilityLabel("Lyrics") }
-                    fs("queueAdd", "Open queue") { toggleQueue(true, H) }
+                    fs("queueAdd", "Open queue") { setQ(qp > 0.5 ? 0 : 1) }
                     cell { Button { if let it { Favs.toggle(it) } } label: {
                         let on = it.map { Favs.isFav($0) } ?? false
                         SVGPath(d: "M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3z").fill(on ? ink.color() : .clear)
@@ -423,74 +463,140 @@ struct PlayBar: View {
 
 // MARK: - Queue
 
-/// The web's phone queue: "Queue (N)" at the top, the songs (the playing one at the top), swipe a row to the right to take it out,
-/// and Clear / Shuffle / Close floating at the bottom right. The background is blurred.
+/// The web's phone queue: no title; the songs (the playing one at the top). In the full queue a chevron at the top lowers it
+/// and a close button slides in at the bottom right. Swipe a song to the right to take it out (the red deepens as it goes);
+/// hold one for its menu. Pulling the list down at its top lowers the queue; scrolling it up from the small queue opens the full one.
 struct QueuePanel: View {
-    var close: () -> Void
+    var level: CGFloat
+    var set: (CGFloat) -> Void
     var zone: AnyGesture<DragGesture.Value>
     var top: CGFloat
     var bottom: CGFloat
     @Environment(PlayerModel.self) private var pm
-    @State private var clearAsk = false
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            Rectangle().fill(Color.black.opacity(0.45)).background(.ultraThinMaterial).ignoresSafeArea()
-            VStack(spacing: 0) {
-                Text("Queue (\(pm.queue.count))").font(.q(20)).foregroundStyle(Color.pink)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 16).padding(.top, 6).padding(.bottom, 12)
-                    .contentShape(Rectangle()).gesture(zone)
-                ScrollViewReader { proxy in
-                    List {
+        let full = level > 1.5
+        ZStack(alignment: .top) {
+            ScrollViewReader { proxy in
+                ScrollView(showsIndicators: false) {
+                    LazyVStack(spacing: 0) {
                         ForEach(Array(pm.queue.enumerated()), id: \.offset) { i, s in
-                            let now = i == pm.index
-                            HStack(spacing: 14) {
-                                Pic_(Pic.square(s, 100), radius: 7).frame(width: 44, height: 44)
-                                VStack(alignment: .leading, spacing: 0) {
-                                    Text(s.title).font(.q(16)).foregroundStyle(now ? Color.pink : Color(hex: 0xd4d4d4)).lineLimit(1)
-                                    Text(s.artistLine + (s.runTimeTicks == nil ? "" : " • \(mmss(s.runTimeTicks))")).font(.q(12.5)).foregroundStyle(Color.dimText).lineLimit(1)
-                                }
-                                Spacer(minLength: 0)
-                            }
-                            .opacity(i < pm.index ? 0.5 : 1)
-                            .padding(.vertical, 11).padding(.horizontal, 10).frame(height: 66)
-                            .background(now ? Color(hex: 0x1d1d20) : .clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .contentShape(Rectangle())
-                            .onTapGesture { pm.jump(to: i) }
-                            .listRowBackground(Color.clear).listRowSeparator(.hidden).listRowInsets(EdgeInsets(top: 0, leading: 10, bottom: 0, trailing: 10))
-                            .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                                if !now { Button(role: .destructive) { pm.remove(at: i) } label: { Text("Remove") } }
-                            }
-                            .id(i)
-                            .onAppear { if i >= pm.queue.count - 6 { pm.moreQueue() } }
+                            QueueRow(song: s, i: i, now: i == pm.index, played: i < pm.index)
+                                .id(i)
+                                .onAppear { if i >= pm.queue.count - 6 { pm.moreQueue() } }
                         }
-                        Color.clear.frame(height: 70 + bottom).listRowBackground(Color.clear).listRowSeparator(.hidden)
+                        Color.clear.frame(height: 90 + bottom)
                     }
-                    .listStyle(.plain).scrollContentBackground(.hidden)
-                    // pulling the list down past its top closes the queue (not just the title row)
-                    .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top < -70 } action: { _, past in if past { close() } }
-                    .onAppear { proxy.scrollTo(pm.index, anchor: .top) }
-                    // the playing song goes to the top at once, with no animation
-                    .onChange(of: pm.index) { _, n in var t = Transaction(); t.disablesAnimations = true; withTransaction(t) { proxy.scrollTo(n, anchor: .top) } }
+                    .padding(.horizontal, 12).padding(.top, 40)
                 }
+                .mask(LinearGradient(stops: [.init(color: full ? .clear : .black, location: 0), .init(color: .black, location: 22 / max(1, UIScreen.main.bounds.height))], startPoint: .top, endPoint: .bottom))
+                .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, y in
+                    // pulled down past the top: down a level. Scrolled up from the small queue: the full queue
+                    if y < -60 { set(max(0, level.rounded() - 1)) }
+                    else if y > 24 && level > 0.5 && level < 1.5 { set(2) }
+                }
+                .onAppear { proxy.scrollTo(pm.index, anchor: .top) }
+                // the playing song goes to the top at once, with no animation
+                .onChange(of: pm.index) { _, n in var t = Transaction(); t.disablesAnimations = true; withTransaction(t) { proxy.scrollTo(n, anchor: .top) } }
             }
-            .padding(.top, top + 14)
-            HStack(spacing: 10) {
-                pill(width: 72) { Text("Clear").font(.q(14)).foregroundStyle(Color(hex: 0xd4d4d4)) } action: { clearAsk = true }
-                pill(width: 44) { Icon(name: "shuffle", size: 22, color: Color(hex: 0xd4d4d4)) } action: { pm.shuffleUpcoming() }
-                pill(width: 44) { Text("×").font(.q(24)).foregroundStyle(Color(hex: 0xd4d4d4)) } action: { close() }
-            }.padding(.trailing, 14).padding(.bottom, 14 + bottom)
+            // the chevron at the top of the full queue lowers it to the small one
+            Button { set(1) } label: {
+                Image(systemName: "chevron.compact.down").font(.system(size: 26, weight: .medium)).foregroundStyle(.white.opacity(0.75))
+                    .frame(maxWidth: .infinity).frame(height: 44, alignment: .top).padding(.top, 8).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).opacity(full ? 1 : 0).allowsHitTesting(full).gesture(zone)
+            .accessibilityLabel("Lower the queue")
         }
-        .alert("Clear the queue?", isPresented: $clearAsk) {
-            Button("Cancel", role: .cancel) {}
-            Button("Clear", role: .destructive) { close(); pm.stop() }
-        } message: { Text("This stops the music and empties the queue.") }
+        .overlay(alignment: .bottomTrailing) {
+            // the full queue's close button: slides in from the right once it is open
+            Button { set(0) } label: {
+                Image(systemName: "xmark").font(.system(size: 20, weight: .semibold)).foregroundStyle(Color(hex: 0xf2f2f2))
+                    .frame(width: 52, height: 52).background(Color(hex: 0x26262b), in: Circle())
+                    .shadow(color: .black.opacity(0.45), radius: 9, y: 4)
+            }
+            .buttonStyle(PressStyle())
+            .offset(x: full ? 0 : 140)
+            .animation(full ? .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.3) : .easeOut(duration: 0.2), value: full)
+            .padding(.trailing, 2).padding(.bottom, 12 + bottom * 0.6)
+            .allowsHitTesting(full)
+            .accessibilityLabel("Close the queue")
+        }
     }
 
-    private func pill<C: View>(width: CGFloat, @ViewBuilder _ c: () -> C, action: @escaping () -> Void) -> some View {
-        Button(action: action) { c().frame(width: width, height: 44).background(Color.surfaceHi, in: Capsule()).shadow(color: .black.opacity(0.5), radius: 9, y: 4) }.buttonStyle(.plain)
+}
+
+/// One song in the queue. A swipe to the right takes it out: the row follows the finger over a red that deepens as it goes,
+/// and letting go past a third of the width removes it (the playing song too: the next one plays).
+private struct QueueRow: View {
+    let song: Item
+    let i: Int
+    let now: Bool
+    let played: Bool
+    @Environment(PlayerModel.self) private var pm
+    @State private var dx: CGFloat = 0
+    @State private var horiz: Bool?
+    @State private var gone = false
+
+    var body: some View {
+        GeometryReader { g in
+            let w = max(1, g.size.width)
+            let f = min(1, dx / w)
+            ZStack(alignment: .leading) {
+                // the red under the row: deeper the further it is pulled
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color(red: 0.86 - 0.5 * Double(f), green: 0.16 - 0.12 * Double(f), blue: 0.18 - 0.12 * Double(f)))
+                    .overlay(alignment: .leading) {
+                        Image(systemName: "trash.fill").font(.system(size: 17, weight: .semibold)).foregroundStyle(.white)
+                            .padding(.leading, 20).opacity(Double(min(1, f * 4)))
+                    }
+                    .opacity(dx > 1 ? 1 : 0)
+                row
+                    .offset(x: dx)
+            }
+            .simultaneousGesture(DragGesture(minimumDistance: 12)
+                .onChanged { v in
+                    if horiz == nil { horiz = v.translation.width > 0 && abs(v.translation.width) > abs(v.translation.height) * 1.3 }
+                    if horiz == true { dx = max(0, v.translation.width) }
+                }
+                .onEnded { v in
+                    defer { horiz = nil }
+                    guard horiz == true else { return }
+                    if dx > w * 0.35 || (v.predictedEndTranslation.width > w * 0.7) {
+                        withAnimation(.easeOut(duration: 0.22)) { dx = w; gone = true }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { pm.remove(at: i); dx = 0; gone = false }
+                    } else {
+                        withAnimation(.easeOut(duration: 0.2)) { dx = 0 }
+                    }
+                })
+        }
+        .frame(height: 66)
+        .opacity(gone ? 0 : 1)
+        .accessibilityIdentifier("queue-row-\(i)")
+    }
+
+    private var row: some View {
+        HStack(spacing: 14) {
+            Pic_(Pic.thumb(song, 100), radius: 7).frame(width: 44, height: 44)
+            VStack(alignment: .leading, spacing: 0) {
+                Text(song.title).font(.q(16)).foregroundStyle(now ? Color.pink : Color(hex: 0xd4d4d4)).lineLimit(1)
+                Text(song.artistLine + (song.runTimeTicks == nil ? "" : " • \(mmss(song.runTimeTicks))")).font(.q(12.5)).foregroundStyle(Color.dimText).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .opacity(played ? 0.5 : 1)
+        .padding(.vertical, 11).padding(.horizontal, 10).frame(height: 66)
+        .background(now ? Color.white.opacity(0.07) : Color.black.opacity(0.001), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .onTapGesture { pm.jump(to: i) }
+        .contextMenu {
+            Button { pm.jump(to: i) } label: { Label("Play from here", systemImage: "play") }
+            Button(role: .destructive) { pm.remove(at: i) } label: { Label("Remove from queue", systemImage: "minus.circle") }
+            Divider()
+            SongMenuItems(it: song)
+        }
     }
 }
+
 
 
 /// The lyrics column's top and bottom fade: an eased curve (no visible band where a straight ramp would end)
@@ -502,4 +608,19 @@ enum LyricsFade {
         for k in 0...10 { let u = Double(k) / 10; stops.append(.init(color: .black.opacity(ss(1 - u)), location: 0.68 + 0.32 * u)) }
         return Gradient(stops: stops)
     }()
+}
+
+
+/// The web's queue geometry (--qlift, --qtop, --qrange): how far the controls have risen at a level, and where the list sits.
+struct QGeo {
+    let H: CGFloat, top: CGFloat, bottom: CGFloat
+    var lift: CGFloat { H * 0.27 }
+    var qtop: CGFloat { top + 12 }
+    var range: CGFloat { max(1, H - qtop - lift - 4 - bottom) }
+    /// how far the controls have risen at level p (0...2)
+    func lifted(_ p: CGFloat) -> CGFloat { p <= 1 ? lift * max(0, p) : lift + range * min(1, p - 1) }
+    /// the level for a rise of l points
+    func level(_ l: CGFloat) -> CGFloat { l <= lift ? max(0, l / lift) : min(2, 1 + (l - lift) / range) }
+    /// the list's offset from its full-queue place
+    func listY(_ p: CGFloat) -> CGFloat { p <= 1 ? range + lift * (1 - max(0, p)) : range * (2 - min(2, p)) }
 }
