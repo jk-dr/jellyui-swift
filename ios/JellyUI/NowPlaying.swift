@@ -460,6 +460,8 @@ struct QueuePanel: View {
                         Color.clear.frame(height: 70 + bottom).listRowBackground(Color.clear).listRowSeparator(.hidden)
                     }
                     .listStyle(.plain).scrollContentBackground(.hidden)
+                    // pulling the list down past its top closes the queue (not just the title row)
+                    .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.contentInsets.top < -70 } action: { _, past in if past { close() } }
                     .onAppear { proxy.scrollTo(pm.index, anchor: .top) }
                     // the playing song goes to the top at once, with no animation
                     .onChange(of: pm.index) { _, n in var t = Transaction(); t.disablesAnimations = true; withTransaction(t) { proxy.scrollTo(n, anchor: .top) } }

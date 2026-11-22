@@ -53,6 +53,8 @@ final class FullscreenTests: XCTestCase {
         let qTitle = a.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Queue ('")).firstMatch
         XCTAssertTrue(qTitle.waitForExistence(timeout: 3) && qTitle.isHittable, "tapping the queue button did not open the queue — the button is covered")
         a.swipeDown(); sleep(2); shot(a, "fs-6-queue-closed")
+        XCTAssertFalse(qTitle.isHittable, "pulling the queue down did not close it")
+        if qTitle.isHittable { a.buttons["×"].tap(); sleep(1) }
 
         // swipe down closes the player; the player bar is then tappable
         let start = a.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12))
