@@ -3,11 +3,11 @@ import SwiftUI
 private func isVideo(_ it: Item) -> Bool { it.mediaType == "Video" || it.type == "Video" }
 private func isMedia(_ it: Item) -> Bool { it.type == "Photo" || it.type == "Video" || it.mediaType == "Photo" || it.mediaType == "Video" }
 private func thumb(_ it: Item) -> URL? {
-    guard let t = it.imageTags?["primary"] else { return nil }
+    guard let t = it.imageTag("Primary") else { return nil }
     return Api.url("/Items/\(it.id)/Images/Primary", ["maxHeight": 400, "quality": 80, "tag": t])
 }
 private func full(_ it: Item) -> URL? {
-    Api.url("/Items/\(it.id)/Images/Primary", ["maxHeight": 2200, "quality": 90, "tag": it.imageTags?["primary"]])
+    Api.url("/Items/\(it.id)/Images/Primary", ["maxHeight": 2200, "quality": 90, "tag": it.imageTag("Primary")])
 }
 
 private let ROW_H: CGFloat = 110

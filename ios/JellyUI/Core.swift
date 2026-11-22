@@ -356,6 +356,16 @@ enum Api {
 
 // MARK: - Pictures
 
+extension Item {
+    /// The server's ImageTags keys are "Primary", "Thumb"…; look them up whatever case the decoder left them in.
+    func imageTag(_ kind: String) -> String? {
+        guard let tags = imageTags else { return nil }
+        if let t = tags[kind] { return t }
+        let low = kind.prefix(1).lowercased() + kind.dropFirst()
+        return tags[low] ?? tags.first { $0.key.caseInsensitiveCompare(kind) == .orderedSame }?.value
+    }
+}
+
 enum Pic {
     private static func img(_ id: String, _ kind: String, h: Int, tag: String?) -> URL? {
         Api.url("/Items/\(id)/Images/\(kind)", ["maxHeight": h, "quality": 85, "tag": tag])
@@ -363,7 +373,7 @@ enum Pic {
 
     static func poster(_ it: Item, h: Int = 450) -> URL? {
         if it.type == "Audio", let a = it.albumId { return img(a, "Primary", h: h, tag: it.albumPrimaryImageTag) }
-        if let t = it.imageTags?["primary"] { return img(it.id, "Primary", h: h, tag: t) }
+        if let t = it.imageTag("Primary") { return img(it.id, "Primary", h: h, tag: t) }
         if let t = it.primaryImageTag { return img(it.itemId ?? it.id, "Primary", h: h, tag: t) }
         if let s = it.seriesId, let t = it.seriesPrimaryImageTag { return img(s, "Primary", h: h, tag: t) }
         if let a = it.albumId, let t = it.albumPrimaryImageTag { return img(a, "Primary", h: h, tag: t) }
@@ -374,7 +384,7 @@ enum Pic {
     static func backdrop(_ it: Item, h: Int = 720) -> URL? {
         if let t = it.backdropImageTags?.first { return img(it.id, "Backdrop", h: h, tag: t) }
         if let p = it.parentBackdropItemId, let t = it.parentBackdropImageTags?.first { return img(p, "Backdrop", h: h, tag: t) }
-        if let t = it.imageTags?["thumb"] { return img(it.id, "Thumb", h: h, tag: t) }
+        if let t = it.imageTag("Thumb") { return img(it.id, "Thumb", h: h, tag: t) }
         return poster(it, h: h)
     }
 

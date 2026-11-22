@@ -482,7 +482,7 @@ extension Pic {
         return Api.url("/Items/\(p.id)/Images/Primary", ["maxHeight": 240, "quality": 85, "tag": t])
     }
     static func episodeThumb(_ it: Item, h: Int = 240) -> URL? {
-        guard let t = it.imageTags?["primary"] else { return nil }
+        guard let t = it.imageTag("Primary") else { return nil }
         return Api.url("/Items/\(it.id)/Images/Primary", ["maxHeight": h, "quality": 85, "tag": t])
     }
 }
