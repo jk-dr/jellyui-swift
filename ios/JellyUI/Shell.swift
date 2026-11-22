@@ -117,7 +117,7 @@ struct RootView: View {
             .tint(Color.pink)
             if nav.searching { SearchLayer().zIndex(10) }
         }
-        .overlay { if p.showFull { NowPlaying() } }
+        .overlay { if p.showFull { NowPlaying().ignoresSafeArea() } }
         .environment(nav)
         .modifier(ConfirmHost())
         // a full-screen cover does not inherit the environment: the film's screen read Nav and crashed
