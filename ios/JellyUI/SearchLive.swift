@@ -21,6 +21,14 @@ struct SearchScreen: View {
     @State private var recent: [String] = UserDefaults.standard.stringArray(forKey: "recentSearches") ?? []
     @State private var recAll = false
     @State private var expanded: Set<String> = []
+    /// "Search Movie / TV show providers": what the On-Demand plugin finds that is not in the library yet (asked only when pressed)
+    @State private var prov: [Card]?
+    @State private var provFor = ""
+    @State private var provLoading = false
+    /// "Load song providers": songs and artists from YouTube / SoundCloud (the YtSearch plugin answers Jellyfin's own search), asked only when pressed
+    @State private var ext: [Item]?
+    @State private var extFor = ""
+    @State private var extLoading = false
     @State private var open: CGFloat = 0
     @FocusState private var focused: Bool
 
@@ -105,10 +113,114 @@ struct SearchScreen: View {
             songGroup
             group("Albums", res.albums) { m in row(m, m.albumArtist ?? "Album") { go(.album(m.id)) } }
             group("Playlists", res.playlists) { m in row(m, "Playlist") { go(.playlist(m.id)) } }
+            providers
+            songProviders
         }
     }
 
     private func yr(_ it: Item) -> String { it.productionYear.map { " · \($0)" } ?? "" }
+    /// The web's "Movie & TV Providers" section: a row to ask, then what was found (movies first, then shows, best match first)
+    @ViewBuilder private var providers: some View {
+        if term.count >= 2 {
+            h3("Movie & TV Providers")
+            if let prov, provFor == term {
+                if prov.isEmpty { Text("Nothing found").font(.q(14)).foregroundStyle(Color.dimText).padding(.horizontal, 8).padding(.vertical, 6) }
+                ForEach(prov) { c in
+                    Button { remember(); go(c.route) } label: {
+                        HStack(spacing: 12) {
+                            Group { if let u = c.img { Pic_(u, radius: 6) } else { Color.surfaceHi } }
+                                .frame(width: 38, height: 54).clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(c.title).font(.q(16)).foregroundStyle(Color(hex: 0xd4d4d4)).lineLimit(1)
+                                Text(c.sub).font(.q(12)).foregroundStyle(Color.dimText).lineLimit(1)
+                            }.frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(.vertical, 6).padding(.horizontal, 8).contentShape(Rectangle())
+                    }.buttonStyle(PressStyle())
+                }
+            } else {
+                Button { Task { await loadProviders() } } label: {
+                    HStack(spacing: 12) {
+                        Text("+").font(.q(20)).foregroundStyle(Color.pink).frame(width: 38, height: 38).background(Color.surfaceHi, in: RoundedRectangle(cornerRadius: 8))
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("Search Movie / TV show providers").font(.q(16)).foregroundStyle(Color(hex: 0xd4d4d4)).lineLimit(1)
+                            Text("Find movies and shows that are not in the library yet").font(.q(12)).foregroundStyle(Color.dimText).lineLimit(1)
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                        if provLoading { ProgressView().tint(Color.dimText) }
+                    }
+                    .padding(.vertical, 6).padding(.horizontal, 8).contentShape(Rectangle())
+                }.buttonStyle(PressStyle()).disabled(provLoading)
+            }
+        }
+    }
+
+    /// The web's "Music Streaming" section
+    @ViewBuilder private var songProviders: some View {
+        if term.count >= 2 {
+            h3("Music Streaming")
+            if let ext, extFor == term {
+                let have = Set(res.songs.map(\.id) + res.artists.map(\.id))
+                let more = ext.filter { !have.contains($0.id) }
+                let songs = more.filter { $0.type == "Audio" }
+                if more.isEmpty { Text("Nothing more found").font(.q(14)).foregroundStyle(Color.dimText).padding(.horizontal, 8).padding(.vertical, 6) }
+                ForEach(more.filter { $0.type == "MusicArtist" }) { a in row(a, "Artist", round: true) { go(.artist(a.id)) } }
+                ForEach(Array(songs.enumerated()), id: \.element.id) { i, it in
+                    HStack(spacing: 4) {
+                        row(it, it.artistLine.isEmpty ? "Song" : it.artistLine) { remember(); pm.play(songs, at: i) }
+                            .contextMenu { SongMenuItems(it: it) }
+                        SongMenu(it: it) {
+                            Icon(name: "moreV", size: 18, color: Color(hex: 0xcfcfcf)).frame(width: 34, height: 34).background(Color.surfaceHi, in: Circle())
+                        }
+                        .padding(.trailing, 6)
+                    }
+                }
+            } else {
+                Button { Task { await loadSongProviders() } } label: {
+                    HStack(spacing: 12) {
+                        Text("+").font(.q(20)).foregroundStyle(Color.pink).frame(width: 38, height: 38).background(Color.surfaceHi, in: RoundedRectangle(cornerRadius: 8))
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("Load song providers").font(.q(16)).foregroundStyle(Color(hex: 0xd4d4d4)).lineLimit(1)
+                            Text("Search YouTube and SoundCloud").font(.q(12)).foregroundStyle(Color.dimText).lineLimit(1)
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                        if extLoading { ProgressView().tint(Color.dimText) }
+                    }
+                    .padding(.vertical, 6).padding(.horizontal, 8).contentShape(Rectangle())
+                }.buttonStyle(PressStyle()).disabled(extLoading)
+            }
+        }
+    }
+
+    private func loadSongProviders() async {
+        let t = term
+        extLoading = true
+        defer { extLoading = false }
+        struct Hints: Decodable { var searchHints: [Item]? }
+        let r: Hints? = try? await Api.get("/Search/Hints", ["userId": Api.uid, "searchTerm": t, "limit": 30, "includeItemTypes": "Audio,MusicArtist"])
+        guard t == term else { return }
+        let items = r?.searchHints ?? []
+        // artists (not in the library) first, then the songs, in the server's order
+        ext = items.filter { $0.type == "MusicArtist" } + items.filter { $0.type != "MusicArtist" }
+        extFor = t
+    }
+
+    private func loadProviders() async {
+        let t = term
+        provLoading = true
+        defer { provLoading = false }
+        struct Hints: Decodable { var searchHints: [Item]? }
+        struct Shows: Decodable { var items: [SeerrTile]? }
+        async let mv: Hints? = try? Api.get("/Search/Hints", ["userId": Api.uid, "searchTerm": t, "limit": 30, "includeItemTypes": "Movie"])
+        async let sh: Shows? = try? Api.get("/JellyUI/Shows", ["q": t], quiet: true)
+        // movies the plugin added for the search (no length: not downloaded yet), then the shows Seerr knows
+        let movies = ((await mv)?.searchHints ?? []).filter { ($0.runTimeTicks ?? 0) == 0 }.map { $0.card }
+        let shows = ((await sh)?.items ?? []).map { $0.card }
+        guard t == term else { return }
+        let low = t.lowercased()
+        func rel(_ c: Card) -> Int { let n = c.title.lowercased(); return n == low ? 3 : (n.hasPrefix(low) ? 2 : (n.contains(low) ? 1 : 0)) }
+        prov = (movies + shows).enumerated().sorted { (rel($0.element), -$0.offset) > (rel($1.element), -$1.offset) }.map(\.element)
+        provFor = t
+    }
+
     private func h3(_ t: String) -> some View {
         Text(t.uppercased()).font(.q(11)).tracking(1.54).foregroundStyle(Color.dimText).padding(.top, 8).padding(.horizontal, 10).padding(.bottom, 4)
     }
@@ -126,10 +238,17 @@ struct SearchScreen: View {
         if !res.songs.isEmpty {
             let n = expanded.contains("Songs") ? min(res.songs.count, 40) : min(res.songs.count, per)
             h3("Songs")
-            // the same song rows as everywhere else: the menu (⋮ and held), favourite, queue, playlist, album
+            // the web's compact search rows (cover, title, artist) with a round dots button; held or dotted, the full song menu
             ForEach(0..<n, id: \.self) { i in
-                SongRow(it: res.songs[i], index: i, showIndex: false) { idx in remember(); pm.play(res.songs, at: idx) }
-                    .padding(.horizontal, -16)
+                let it = res.songs[i]
+                HStack(spacing: 4) {
+                    row(it, it.artistLine.isEmpty ? "Song" : it.artistLine) { remember(); pm.play(res.songs, at: i) }
+                        .contextMenu { SongMenuItems(it: it) }
+                    SongMenu(it: it) {
+                        Icon(name: "moreV", size: 18, color: Color(hex: 0xcfcfcf)).frame(width: 34, height: 34).background(Color.surfaceHi, in: Circle())
+                    }
+                    .padding(.trailing, 6)
+                }
             }
             if res.songs.count > n { moreRow("Show \(res.songs.count - n) more") { _ = expanded.insert("Songs") } }
         }

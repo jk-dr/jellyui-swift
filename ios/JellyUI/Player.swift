@@ -245,7 +245,7 @@ final class PlayerModel {
     /// and anything else as a 320k mp3, which starts at once)
     private func source(_ it: Item, original: Bool) -> URL? {
         if !original, let c = SongCache.shared.cached(it.id) { return c }
-        if original { return Api.keyed("/Audio/\(it.id)/stream", ["static": true, "deviceId": Session.shared.deviceId]) }
+        if original || it.isVirtual { // (an online-only song: the plugin serves it on the plain stream) return Api.keyed("/Audio/\(it.id)/stream", ["static": true, "deviceId": Session.shared.deviceId]) }
         return Api.keyed("/Audio/\(it.id)/universal", [
             "userId": Api.uid, "deviceId": Session.shared.deviceId, "container": "mp3,aac,m4a|aac,m4b|aac,mp4|aac",
             "transcodingContainer": "mp3", "transcodingProtocol": "http", "audioCodec": "mp3", "maxStreamingBitrate": 320000,

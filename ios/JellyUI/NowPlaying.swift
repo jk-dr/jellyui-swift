@@ -255,11 +255,28 @@ struct NowPlaying: View {
             }
 
             // the queue: always as tall as the full queue, moved (never resized) with the finger
-            QueuePanel(level: qp, set: { setQ($0) }, close: { setQ(qFromButton ? 0 : 1) }, zone: zone(H, noQueue: true), top: top, bottom: bottom)
+            QueuePanel(level: qp, set: { setQ($0) }, zone: zone(H, noQueue: true), top: top, bottom: bottom)
                 .frame(height: H - g.qtop).frame(maxHeight: .infinity, alignment: .bottom)
                 .offset(y: g.listY(qp))
                 .opacity(late ? Double(min(1, qp * 5)) : 0)
                 .allowsHitTesting(qp > 0.5)
+
+            // the full queue's close button: on top of everything, sliding in from the right once the queue is full
+            let fullQ = qp > 1.5
+            Button { setQ(qFromButton ? 0 : 1) } label: {
+                Image(systemName: "xmark").font(.system(size: 20, weight: .semibold)).foregroundStyle(Color(hex: 0xf2f2f2))
+                    .frame(width: 52, height: 52).background(Color(hex: 0x26262b), in: Circle())
+                    .shadow(color: .black.opacity(0.45), radius: 9, y: 4)
+                    .contentShape(Circle().inset(by: -12))
+            }
+            .buttonStyle(PressStyle())
+            .offset(x: fullQ ? 0 : 140)
+            .animation(fullQ ? .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.3) : .easeOut(duration: 0.2), value: fullQ)
+            .padding(.trailing, 14).padding(.bottom, 12 + bottom * 0.6)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+            .allowsHitTesting(fullQ)
+            .accessibilityLabel("Close the queue")
+            .zIndex(5)
 
             controls(it, noLyrics: noLyrics, bottom: bottom, H: H)
                 .offset(y: -L)
@@ -490,7 +507,6 @@ struct PlayBar: View {
 struct QueuePanel: View {
     var level: CGFloat
     var set: (CGFloat) -> Void
-    var close: () -> Void
     var zone: AnyGesture<DragGesture.Value>
     var top: CGFloat
     var bottom: CGFloat
@@ -534,20 +550,7 @@ struct QueuePanel: View {
             .buttonStyle(.plain).opacity(full ? 1 : 0).allowsHitTesting(full).gesture(zone)
             .accessibilityLabel("Lower the queue")
         }
-        .overlay(alignment: .bottomTrailing) {
-            // the full queue's close button: slides in from the right once it is open
-            Button { close() } label: {
-                Image(systemName: "xmark").font(.system(size: 20, weight: .semibold)).foregroundStyle(Color(hex: 0xf2f2f2))
-                    .frame(width: 52, height: 52).background(Color(hex: 0x26262b), in: Circle())
-                    .shadow(color: .black.opacity(0.45), radius: 9, y: 4)
-            }
-            .buttonStyle(PressStyle())
-            .offset(x: full ? 0 : 140)
-            .animation(full ? .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.3) : .easeOut(duration: 0.2), value: full)
-            .padding(.trailing, 2).padding(.bottom, 12 + bottom * 0.6)
-            .allowsHitTesting(full)
-            .accessibilityLabel("Close the queue")
-        }
+
     }
 
 }

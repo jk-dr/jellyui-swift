@@ -454,6 +454,12 @@ struct Card: Hashable, Identifiable {
 }
 
 extension Item {
+    /// a song that is only on YouTube / SoundCloud / the catalogue (the YtSearch plugin's; its picture tag says so): played as the file the server makes
+    var isVirtual: Bool {
+        let t = imageTag("Primary") ?? primaryImageTag ?? albumPrimaryImageTag ?? ""
+        return t.hasPrefix("yt") || t.hasPrefix("sc") || t.hasPrefix("ct")
+    }
+
     var card: Card {
         let id = itemId ?? self.id
         switch type {
