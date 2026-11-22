@@ -347,6 +347,22 @@ struct ActionRow: View {
     }
 }
 
+// MARK: - Saved on this device
+
+/// The web's mark for a song kept on this device: a blue edge inside the cover's corners.
+struct SavedEdge: ViewModifier {
+    let id: String
+    var radius: CGFloat = 8
+    func body(content: Content) -> some View {
+        content.overlay {
+            if SongCache.shared.isSaved(id) {
+                RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Color(hex: 0x3d7cf0), lineWidth: 2)
+            }
+        }
+    }
+}
+extension View { func savedEdge(_ id: String, radius: CGFloat = 8) -> some View { modifier(SavedEdge(id: id, radius: radius)) } }
+
 // MARK: - Skeleton
 
 struct Skeleton: View {

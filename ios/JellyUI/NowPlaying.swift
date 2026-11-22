@@ -56,6 +56,7 @@ struct MiniPlayer: View {
     @Environment(PlayerModel.self) private var pm
     @Environment(Nav.self) private var nav
     @State private var closeAsk = false
+    @State private var tint = Color(hex: 0x1c1c1f)
 
     var body: some View {
         if let it = pm.current {
@@ -88,7 +89,15 @@ struct MiniPlayer: View {
             }
             .padding(.leading, 13).padding(.trailing, 10).padding(.top, 10).padding(.bottom, 6)
             // Liquid Glass, like the tab bar under it (the web's corner: 20)
-            .glassEffect(.regular.tint(Color(hex: 0x1c1c1f).opacity(0.35)).interactive(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .glassEffect(.regular.tint(tint.opacity(0.6)).interactive(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .task(id: it.id) {
+                // the cover's average colour, darkened, as the web's bar does
+                guard let u = Pic.square(it, 160), let c = await CoverColours.load(u) else { return }
+                var r: Float = 0, g: Float = 0, b: Float = 0
+                for k in stride(from: 0, to: c.count, by: 3) { r += c[k]; g += c[k + 1]; b += c[k + 2] }
+                let n = Float(max(1, c.count / 3)), dim: Float = 0.55
+                withAnimation(.easeInOut(duration: 0.6)) { tint = Color(red: Double(r / n * dim), green: Double(g / n * dim), blue: Double(b / n * dim)) }
+            }
             .padding(.horizontal, 12)
             .contextMenu {
                 Button { Favs.toggle(it) } label: { Label(fav ? "Remove from Favourites" : "Favourite", systemImage: fav ? "heart.slash" : "heart") }
@@ -576,7 +585,7 @@ private struct QueueRow: View {
 
     private var row: some View {
         HStack(spacing: 14) {
-            Pic_(Pic.thumb(song, 100), radius: 7).frame(width: 44, height: 44)
+            Pic_(Pic.thumb(song, 132), radius: 7).frame(width: 44, height: 44).savedEdge(song.id, radius: 7)
             VStack(alignment: .leading, spacing: 0) {
                 Text(song.title).font(.q(16)).foregroundStyle(now ? Color.pink : Color(hex: 0xd4d4d4)).lineLimit(1)
                 Text(song.artistLine + (song.runTimeTicks == nil ? "" : " • \(mmss(song.runTimeTicks))")).font(.q(12.5)).foregroundStyle(Color.dimText).lineLimit(1)

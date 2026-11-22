@@ -17,6 +17,8 @@ final class PlayerModel {
     var loading = false
     var repeatMode = "off" // off, all, one
     var shuffleOn = false
+    /// bumped by every seek: the lyrics re-sync to it at once
+    var seeks = 0
     @ObservationIgnored var more: (() async -> [Item])?
     @ObservationIgnored private var fetchingMore = false
     /// set while a film is playing: the lock screen's play, pause and seek then go to it
@@ -200,8 +202,11 @@ final class PlayerModel {
     func pause() { wantsPlay = false; player.pause() }
 
     func seek(to s: Double) {
-        player.seek(to: CMTime(seconds: max(0, s), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        player.seek(to: CMTime(seconds: max(0, s), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+            DispatchQueue.main.async { self?.seeks += 1 } // once the player is really there
+        }
         position = s
+        seeks += 1
     }
 
     func stop() {

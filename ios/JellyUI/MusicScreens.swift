@@ -212,7 +212,7 @@ struct SongRow: View {
                             if now { EqBars(playing: playing) } else { Text(String(it.indexNumber ?? index + 1)).font(.q(15)).foregroundStyle(Color.dimText).monospacedDigit() }
                         }.frame(width: 24, height: 20, alignment: .trailing)
                     }
-                    if showArt { Pic_(Pic.poster(it, h: 100), radius: 6).frame(width: 40, height: 40) }
+                    if showArt { Pic_(Pic.thumb(it, 120), radius: 6).frame(width: 40, height: 40).savedEdge(it.id, radius: 6) }
                     VStack(alignment: .leading, spacing: 0) {
                         Text(n.t + (n.live ? " (Live)" : "")).font(.q(15)).foregroundStyle(now ? Color.pink : Color(hex: 0xd4d4d4)).lineLimit(1)
                         Text(who + (len.isEmpty ? "" : " • \(len)")).font(.q(12)).foregroundStyle(Color.dimText).lineLimit(1)
@@ -331,6 +331,7 @@ struct QuickRow: View {
                     }
                     .frame(width: 56, height: 56)
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .savedEdge(it.id, radius: 8)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(n.t).font(.q(16)).foregroundStyle(Color(hex: 0xd4d4d4)).lineLimit(1)
                         Text(it.artistLine).font(.q(14)).foregroundStyle(Color.dimText).lineLimit(1)
@@ -357,12 +358,12 @@ struct RowColumns: View {
     var onPlay: (Int) -> Void
 
     var body: some View {
-        let cols = (songs.count + 3) / 4
+        let cols = (songs.count + 2) / 3
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(alignment: .top, spacing: 12) {
                 ForEach(0..<cols, id: \.self) { c in
                     VStack(spacing: 8) {
-                        ForEach(c * 4..<min(c * 4 + 4, songs.count), id: \.self) { i in
+                        ForEach(c * 3..<min(c * 3 + 3, songs.count), id: \.self) { i in
                             QuickRow(it: songs[i], index: i, width: colW, onPlay: onPlay)
                         }
                     }

@@ -163,11 +163,12 @@ private struct LyricRow: View, Equatable {
     let level: Double // brightness: 1 current, .3 next, .15 others
     let playing: Bool
     let player: PlayerModel
+    var soft = false // out of focus (the web's blur of the lines not being sung)
     var tick = 0 // changes on a seek while paused, so the sung row redraws at the new place
     var onTap: () -> Void = {}
 
     static func == (a: LyricRow, b: LyricRow) -> Bool {
-        a.ink == b.ink && a.line.id == b.line.id && a.size == b.size && a.active == b.active && a.level == b.level && a.playing == b.playing && a.tick == b.tick
+        a.ink == b.ink && a.line.id == b.line.id && a.size == b.size && a.active == b.active && a.level == b.level && a.playing == b.playing && a.tick == b.tick && a.soft == b.soft
     }
 
     var body: some View {
@@ -194,6 +195,9 @@ private struct LyricRow: View, Equatable {
         // the line that becomes current takes its full colour at once (a fade made the words hard to follow); the others ease
         .opacity(line.brk ? (active ? (level < 0.1 ? 0.07 : 1) : 0) : level)
         .animation(active ? nil : .easeOut(duration: 0.3), value: level)
+        // out of focus: sharp at once when it comes into focus; going out, it first finishes shrinking (0.8 s), then blurs over 0.7 s
+        .blur(radius: soft ? size * 0.1 : 0)
+        .animation(soft ? .easeInOut(duration: 0.7).delay(0.84) : .easeOut(duration: 0.25), value: soft)
         .scaleEffect(active && !line.brk ? 1.08 : 1, anchor: .leading)
         .animation(.timingCurve(0.45, 0.05, 0.15, 1, duration: 0.8), value: active)
         .contentShape(Rectangle())
@@ -299,12 +303,15 @@ struct LyricsView: View {
                         ForEach(Array(lines.enumerated()), id: \.element.id) { i, l in
                             let isActive = synced && i == idx
                             let upcoming = synced && i > idx && i <= idx + 2
+                            // in focus: the sung line, the next one, and up to two more starting within 2.5 s of it
+                            let near = i == idx + 1 || (upcoming && idx >= 0 && (l.t ?? 1e9) - (lines[idx].t ?? 0) <= 2.5)
                             LyricRow(
                                 ink: ink, line: l, size: 30,
                                 active: isActive || !synced,
                                 level: !playing ? 0.07 : (!synced ? 0.9 : (isActive ? 1 : (upcoming ? 0.3 : 0.15))),
                                 playing: playing && isActive,
                                 player: player,
+                                soft: synced && !l.brk && !isActive && !near,
                                 tick: seekTick,
                                 onTap: { if let lt = l.t { player.seek(to: max(0, lt - 0.05)); hold = .distantPast; Task { try? await Task.sleep(for: .milliseconds(60)); start() } } }
                             )
@@ -338,6 +345,7 @@ struct LyricsView: View {
             }
             .onChange(of: lines.first?.id) { _, _ in start() }
             .onChange(of: playing) { _, _ in start() } // a resume or a seek wakes the clock at once
+            .onChange(of: player.seeks) { _, _ in start() } // a seek (bar, lock screen, a line) re-syncs the lines at once
             // a seek (a row tap or the bar) while paused: the paused sung row is redrawn, as it is not on a timeline
             // only this tiny view reads the position (it changes twice a second): the column itself is not redrawn for it
             .background { if !playing { SeekWatch(player: player) { seekTick += 1 } } }

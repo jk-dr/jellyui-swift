@@ -112,6 +112,12 @@ final class SongCache {
         return file(id)
     }
 
+    /// whether a song is kept on this device (no use mark: only for drawing)
+    func isSaved(_ id: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return manifest[id] != nil
+    }
+
     func stats() -> (count: Int, bytes: Int) {
         lock.lock(); defer { lock.unlock() }
         return (manifest.count, manifest.values.reduce(0) { $0 + $1.size })

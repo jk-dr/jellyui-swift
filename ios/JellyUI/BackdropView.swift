@@ -38,6 +38,8 @@ enum CoverColours {
 struct BackdropView: View {
     let cover: URL?
     let playing: Bool
+    /// hidden behind something opaque (the full queue): nothing is drawn until it shows again
+    var covered = false
 
     @State private var a: [Float] = CoverColours.fallback
     @State private var b: [Float] = CoverColours.fallback
@@ -66,7 +68,7 @@ struct BackdropView: View {
         GeometryReader { geo in
             let w = geo.size.width / divisor
             let h = geo.size.height / divisor
-            TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: !playing && fadeFrom == nil)) { tl in
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: covered || (!playing && fadeFrom == nil))) { tl in
                 let m = fadeFrom.map { min(1, max(0, tl.date.timeIntervalSince($0) / fade)) } ?? 0
                 Rectangle()
                     .fill(Color.black)
