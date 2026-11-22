@@ -284,6 +284,9 @@ struct NowPlaying: View {
             UIApplication.shared.isIdleTimerDisabled = true
         }
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+        #if DEBUG
+        .onReceive(NotificationCenter.default.publisher(for: .tourQueue)) { _ in setQ(1) } // the CI tour's "queue" screen: the small queue
+        #endif
         // the song changed: its lines are put up in this same update (a task would run a frame later)
         .onChange(of: it?.id) { _, _ in if let c = pm.current, let m = LyricsMemo.map[c.id] { coverOnly = false; lines = m; loading = false; lyricsFor = c.id } }
         .task(id: it?.id) { await loadSong(it) }

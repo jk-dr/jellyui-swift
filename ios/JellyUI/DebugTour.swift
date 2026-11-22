@@ -40,7 +40,8 @@ enum Tour {
             var fallback: Item? = nil
             if song == nil { fallback = await first("Audio") }
             guard let s = song ?? fallback else { return }
-            player.play([s])
+            let more = (try? await Api.items(["IncludeItemTypes": "Audio", "Recursive": true, "SortBy": "Random", "Limit": 8])) ?? []
+            player.play([s] + more.filter { $0.id != s.id })
             if r != "mini" { try? await Task.sleep(for: .seconds(1)); player.showFull = true }
             if r == "queue" { try? await Task.sleep(for: .seconds(2)); NotificationCenter.default.post(name: .tourQueue, object: nil) }
         default: break
