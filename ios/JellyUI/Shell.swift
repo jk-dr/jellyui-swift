@@ -326,6 +326,7 @@ struct BackPill: View {
 /// A scrolling page that starts under the header. The bottom follows the safe area (tab bar and player bar).
 struct Page<Content: View>: View {
     var refresh: (() async -> Void)?
+    var bg: Color = .bg
     @ViewBuilder var content: () -> Content
 
     var body: some View {
@@ -340,7 +341,7 @@ struct Page<Content: View>: View {
             if let refresh { scroll.refreshable { await refresh() } } else { scroll }
         }
         .ignoresSafeArea(edges: .top)
-        .background(Color.bg.ignoresSafeArea())
+        .background(bg.ignoresSafeArea())
     }
 }
 

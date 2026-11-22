@@ -263,6 +263,7 @@ struct NowPlaying: View {
 
             controls(it, noLyrics: noLyrics, bottom: bottom, H: H)
                 .offset(y: -L)
+                .opacity(qp > 1 ? Double(max(0, 2 - qp) * 1.4 - 0.4) : 1) // they leave through the top: gone before they reach the status bar
                 .allowsHitTesting(qp < 1.5)
         }
         .environment(\.ink, ink)
@@ -494,6 +495,7 @@ struct QueuePanel: View {
     var top: CGFloat
     var bottom: CGFloat
     @Environment(PlayerModel.self) private var pm
+    @State private var touching = false // the person's finger is scrolling the list (programmatic scrolls never change the level)
 
     var body: some View {
         let full = level > 1.5
@@ -511,10 +513,12 @@ struct QueuePanel: View {
                     .padding(.horizontal, 12).padding(.top, 40)
                 }
                 .mask(LinearGradient(stops: [.init(color: full ? .clear : .black, location: 0), .init(color: .black, location: 22 / max(1, UIScreen.main.bounds.height))], startPoint: .top, endPoint: .bottom))
-                .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { _, y in
-                    // pulled down past the top: down a level. Scrolled up from the small queue: the full queue
-                    if y < -60 { set(max(0, level.rounded() - 1)) }
-                    else if y > 24 && level > 0.5 && level < 1.5 { set(2) }
+                .onScrollPhaseChange { _, p in touching = p == .interacting || p == .tracking }
+                .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { old, y in
+                    // only the person's own scrolling moves the queue: pulled down past the top, down a level; scrolled up from the small queue, the full queue
+                    guard touching else { return }
+                    if y < -60 { touching = false; set(max(0, level.rounded() - 1)) }
+                    else if y > old + 24 && level > 0.5 && level < 1.5 { touching = false; set(2) }
                 }
                 // the web's: in the small queue the list is lifted by the 40 kept for the chevron, so it starts right under the buttons
                 .offset(y: -40 * (1 - max(0, min(1, level - 1))))

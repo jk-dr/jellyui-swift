@@ -28,8 +28,10 @@ final class FullscreenTests: XCTestCase {
         shot(a, "fs-1-open")
 
         // a lyric line takes the tap (seeks there)
-        let row = a.descendants(matching: .any)["lyric-2"]
-        if row.waitForExistence(timeout: 8) {
+        // the first lyric line on screen (the ones above the sung line sit under the header)
+        _ = a.descendants(matching: .any)["lyric-0"].waitForExistence(timeout: 8)
+        let row = (0..<12).map { a.descendants(matching: .any)["lyric-\($0)"] }.first { $0.exists && $0.isHittable } ?? a.descendants(matching: .any)["lyric-2"]
+        if row.exists {
             XCTAssertTrue(row.isHittable, "lyric row is covered by another view")
             row.tap()
             sleep(2)

@@ -157,6 +157,7 @@ struct SongMenuItems: View {
     var body: some View {
         Button { pm.enqueueNext(it) } label: { Label("Play next", systemImage: "text.insert") }
         Button { pm.enqueueLast(it) } label: { Label("Add to queue", systemImage: "text.badge.plus") }
+        Button { Task { await Plugin.startRadio(it.id) } } label: { Label("Start radio", systemImage: "dot.radiowaves.left.and.right") }
         Menu {
             ForEach(pls.list) { p in
                 Button { Task { _ = try? await Api.request("/Playlists/\(p.id)/Items", query: ["ids": it.id, "userId": Api.uid], method: "POST") } } label: { Label(p.title, systemImage: "music.note.list") }
@@ -258,6 +259,7 @@ struct SongRow: View {
     let index: Int
     var showArt = true
     var showIndex = true
+    var rowBg: Color? = nil // the Favourites page's red rows
     var onPlay: (Int) -> Void
     @Environment(PlayerModel.self) private var pm
 
@@ -295,7 +297,7 @@ struct SongRow: View {
         }
         .padding(.trailing, 4)
         // the web's row box takes in the three dots too (full width, 12 round)
-        .background(now ? Color(hex: 0x1d1618) : Color(hex: 0x121214), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(now ? Color(hex: 0x1d1618) : (rowBg ?? Color(hex: 0x121214)), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(now ? Color.pink.opacity(0.35) : .clear, lineWidth: 1.2))
         .padding(.horizontal, 16).padding(.bottom, 6)
     }
@@ -482,7 +484,7 @@ struct TileWrap<Content: View>: View {
     var gap: CGFloat = 12
     @ViewBuilder var content: () -> Content
     var body: some View {
-        FlowWrap(spacing: gap) { content() }.padding(6).padding(.horizontal, 5).padding(.top, 6)
+        FlowWrap(spacing: gap) { content() }.padding(.vertical, 6).padding(.horizontal, 28).padding(.top, 6)
     }
 }
 
@@ -695,10 +697,13 @@ struct ListScreen: View {
         let isFav = fav ?? (head?.userData?.isFavorite ?? false)
         let canFav = head != nil && id != "favourites" && !id.hasPrefix("mix-")
 
-        Page {
+        let favPage = id == "favourites" || (head.map(isFavouritesList) ?? false)
+        Page(bg: favPage ? Color(hex: 0x170b0f) : .bg) {
             if let head {
                 VStack(alignment: .leading, spacing: 0) {
-                    if id.hasPrefix("mix-") {
+                    if favPage {
+                        EmptyView() // the web's Favourites page has no picture: the title comes first
+                    } else if id.hasPrefix("mix-") {
                         MixStrip(songs: songs) { pm.play(songs, at: $0) }
                     } else {
                     Group {
@@ -720,15 +725,21 @@ struct ListScreen: View {
                     .frame(maxWidth: .infinity)
                     }
                     Text(head.title).font(.q(28)).foregroundStyle(Color.pink).shadow(color: .black, radius: 4, y: 1).lineLimit(3)
-                        .multilineTextAlignment(kind == .artist ? .center : .leading).frame(maxWidth: .infinity, alignment: kind == .artist ? .center : .leading).padding(.top, 14)
+                        .multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 14)
                     if kind == .artist {
-                        VStack(spacing: 10) {
+                        HStack(spacing: 10) {
                             playButton
-                            ActionRow(items: [
-                                Act(id: "queue", icon: "queueAdd", label: "Add all to queue", disabled: songs.isEmpty, action: { songs.forEach { pm.enqueueLast($0) } }),
-                                Act(id: "pl", icon: "queue", label: "Add all to playlist", disabled: songs.isEmpty, menu: AnyView(AddToPlaylistMenu(ids: songs.map { $0.id }) { Color.clear.frame(maxWidth: .infinity, minHeight: 44) })),
-                            ])
-                        }.padding(.top, 14)
+                            roundButton("queueAdd", "Add all to queue") { songs.forEach { pm.enqueueLast($0) } }
+                            AddToPlaylistMenu(ids: songs.map { $0.id }) {
+                                Icon(name: "queue", size: 20, color: .pink).frame(width: 44, height: 44).background(Color.surfaceHi, in: Circle())
+                            }
+                            .disabled(songs.isEmpty).accessibilityLabel("Add all to playlist")
+                            Button { Task { await Plugin.startRadio(id) } } label: {
+                                Image(systemName: "arrow.clockwise").font(.system(size: 18, weight: .semibold)).foregroundStyle(Color.pink)
+                                    .frame(width: 44, height: 44).background(Color.surfaceHi, in: Circle())
+                            }
+                            .buttonStyle(PressStyle()).accessibilityLabel("Start radio")
+                        }.padding(.top, 12)
                     } else {
                         HStack(spacing: 10) {
                             playButton
@@ -750,12 +761,17 @@ struct ListScreen: View {
             } else {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(songs.enumerated()), id: \.offset) { i, s in
-                        SongRow(it: s, index: i, showArt: true, showIndex: false) { pm.play(songs, at: $0) }
+                        SongRow(it: s, index: i, showArt: true, showIndex: false, rowBg: favPage ? Color(hex: 0x2a1218) : nil) { pm.play(songs, at: $0) }
                     }
                 }
             }
         }
         .task { await load() }
+    }
+
+    private func roundButton(_ icon: String, _ label: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) { Icon(name: icon, size: 20, color: .pink).frame(width: 44, height: 44).background(Color.surfaceHi, in: Circle()) }
+            .buttonStyle(PressStyle()).disabled(songs.isEmpty).accessibilityLabel(label)
     }
 
     private var playButton: some View {

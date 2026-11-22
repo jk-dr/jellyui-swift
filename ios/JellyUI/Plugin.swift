@@ -282,6 +282,30 @@ enum Plugin {
         var mixes: [Mix]?
         var items: [Item]?
     }
+    /// A radio from a song or an artist (the server's RadioController): a batch of songs like it; asked again as the queue runs low.
+    static func radio(_ seed: String, served: Int = 0, exclude: [String] = []) async -> [Item] {
+        struct R: Decodable { var items: [Item]? }
+        let body: [String: Any] = ["n": 25, "served": served, "exclude": Array(exclude.suffix(1500)), "likes": [String](), "skips": [String](), "seed": seed]
+        guard let data = try? await Api.request("/JellyUI/Radio", method: "POST", body: body, quiet: true),
+              let r = try? jellyDecoder.decode(R.self, from: data) else { return [] }
+        return r.items ?? []
+    }
+
+    /// Plays a radio: the first batch now, the next ones as the queue runs low (songs already queued are left out).
+    @MainActor
+    static func startRadio(_ seed: String) async {
+        let first = await radio(seed)
+        guard !first.isEmpty else { return }
+        final class Count { var n = 0 }
+        let served = Count(); served.n = first.count
+        PlayerModel.shared.play(first, at: 0, more: {
+            let have = await MainActor.run { PlayerModel.shared.queue.map(\.id) }
+            let got = await radio(seed, served: served.n, exclude: have)
+            served.n += got.count
+            return got
+        })
+    }
+
     static func mixes() async -> MixesData? { try? await Api.get("/JellyUI/Mixes", quiet: true) }
     static func genreMix(_ genre: String, n: Int = 100) async -> [Item] {
         guard let d = try? await Api.request("/JellyUI/GenreMix", method: "POST", body: ["genre": genre, "n": n, "served": 0, "exclude": []], quiet: true),
