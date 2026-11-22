@@ -8,14 +8,14 @@ import SwiftUI
 final class PlayerModel {
     static let shared = PlayerModel()
 
-    var queue: [Item] = []
+    var queue: [Item] = [] { didSet { needPrep() } }
     var index = 0
     var isPlaying = false
     var position: Double = 0 // updated about twice a second, for bars and labels
     var duration: Double = 0
     var showFull = false
     var loading = false
-    var repeatMode = "off" // off, all, one
+    var repeatMode = "off" { didSet { needPrep() } } // off, all, one
     var shuffleOn = false
     /// bumped by every seek: the lyrics re-sync to it at once
     var seeks = 0
@@ -24,7 +24,12 @@ final class PlayerModel {
     /// set while a film is playing: the lock screen's play, pause and seek then go to it
     @ObservationIgnored var video: AVPlayer?
 
-    @ObservationIgnored private let player = AVPlayer()
+    /// a queue player: the next song waits behind the playing one and starts the moment it ends (gapless)
+    @ObservationIgnored private let player = AVQueuePlayer()
+    /// the AVPlayerItem of the song playing now, and the next song's, already queued behind it
+    @ObservationIgnored private var currentAV: AVPlayerItem?
+    @ObservationIgnored private var prepared: (id: String, item: AVPlayerItem)?
+    @ObservationIgnored private var prepPending = false
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var endObserver: NSObjectProtocol?
     @ObservationIgnored private var statusObserver: NSKeyValueObservation?
@@ -181,12 +186,13 @@ final class PlayerModel {
     }
 
     func nextSong(auto: Bool = false) {
-        if auto && repeatMode == "one" { seek(to: 0); player.play(); return }
+        // (the finished item has left the queue player: the song is loaded again)
+        if auto && repeatMode == "one" { load(); return }
         if index + 1 < queue.count { jump(to: index + 1); return }
         // at the end of an endless queue: wait for the songs on their way (topUp carries on from here)
         if fetchingMore { pendingEnd = auto; return }
         if repeatMode == "all" && !queue.isEmpty { jump(to: 0) }
-        else if auto { report("Stopped"); wantsPlay = false; player.pause(); isPlaying = false; seek(to: 0) }
+        else if auto { report("Stopped"); load(); wantsPlay = false; player.pause(); isPlaying = false }
         else { stop() }
     }
 
@@ -217,7 +223,9 @@ final class PlayerModel {
         loading = false
         artworkTask?.cancel(); artworkTask = nil
         player.pause()
-        player.replaceCurrentItem(with: nil)
+        player.removeAllItems()
+        currentAV = nil
+        prepared = nil
         queue = []
         index = 0
         position = 0
@@ -233,32 +241,28 @@ final class PlayerModel {
 
     // MARK: loading
 
-    private func load(universal: Bool = false) {
-        guard let it = current else { return }
-        // `universal` here means the second try: the original file as it is
-        triedUniversal = universal
-        let url: URL?
-        if universal {
-            url = Api.keyed("/Audio/\(it.id)/stream", ["static": true, "deviceId": Session.shared.deviceId])
-        } else {
-            // a song not saved yet streams in pieces: mp3 / aac as they are, anything else (flac, wav) as a 320k mp3 that starts at once
-            url = Api.keyed("/Audio/\(it.id)/universal", [
-                "userId": Api.uid, "deviceId": Session.shared.deviceId, "container": "mp3,aac,m4a|aac,m4b|aac,mp4|aac",
-                "transcodingContainer": "mp3", "transcodingProtocol": "http", "audioCodec": "mp3", "maxStreamingBitrate": 320000,
-            ])
-        }
-        guard let url = (universal ? nil : SongCache.shared.cached(it.id)) ?? url else { return }
-        SongCache.shared.precache(queue, from: index)
-        let avItem = AVPlayerItem(url: url)
+    /// Where a song is played from: its saved copy, else a stream (`original`: the file as it is; otherwise mp3 / aac as they are
+    /// and anything else as a 320k mp3, which starts at once)
+    private func source(_ it: Item, original: Bool) -> URL? {
+        if !original, let c = SongCache.shared.cached(it.id) { return c }
+        if original { return Api.keyed("/Audio/\(it.id)/stream", ["static": true, "deviceId": Session.shared.deviceId]) }
+        return Api.keyed("/Audio/\(it.id)/universal", [
+            "userId": Api.uid, "deviceId": Session.shared.deviceId, "container": "mp3,aac,m4a|aac,m4b|aac,mp4|aac",
+            "transcodingContainer": "mp3", "transcodingProtocol": "http", "audioCodec": "mp3", "maxStreamingBitrate": 320000,
+        ])
+    }
+
+    /// Watches an item that is (or is about to be) the playing one: its end, and whether it plays.
+    private func attach(_ avItem: AVPlayerItem, _ it: Item) {
         if let o = endObserver { NotificationCenter.default.removeObserver(o) }
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: avItem, queue: .main) { [weak self] _ in
             // an item that was already replaced (the person jumped to another song) says nothing more
-            guard let self, self.player.currentItem === avItem else { return }
-            self.nextSong(auto: true)
+            guard let self, self.currentAV === avItem else { return }
+            self.ended()
         }
-        statusObserver = avItem.observe(\.status, options: [.new]) { [weak self] i, _ in
+        statusObserver = avItem.observe(\.status, options: [.initial, .new]) { [weak self] i, _ in
             DispatchQueue.main.async {
-                guard let self, self.player.currentItem === i else { return }
+                guard let self, self.currentAV === i else { return }
                 if i.status == .failed {
                     SongCache.shared.drop(it.id) // a saved copy that will not play is forgotten
                     if !self.triedUniversal { self.load(universal: true); return }
@@ -276,11 +280,25 @@ final class PlayerModel {
                 }
             }
         }
+    }
+
+    private func load(universal: Bool = false) {
+        guard let it = current else { return }
+        // `universal` here means the second try: the original file as it is
+        triedUniversal = universal
+        guard let url = source(it, original: universal) else { return }
+        SongCache.shared.precache(queue, from: index)
+        let avItem = AVPlayerItem(url: url)
+        currentAV = avItem
+        attach(avItem, it)
         duration = it.seconds
         position = 0
         loading = true
         if more != nil && queue.count - index <= 5 { topUp() }
-        player.replaceCurrentItem(with: avItem)
+        prepared = nil
+        player.removeAllItems()
+        player.insert(avItem, after: nil)
+        prepareNext()
         wantsPlay = true
         player.play()
         report("Playing")
@@ -288,6 +306,48 @@ final class PlayerModel {
         setNowPlaying(it)
         Task { _ = await LyricsStore.shared.load(it) } // lyrics ready before the screen opens
         if let n = next { Task { _ = await LyricsStore.shared.load(n) } }
+    }
+
+    /// The song ended. If the next one was waiting behind it, the queue player is already playing it with no gap: it is taken
+    /// on as the current song. Otherwise (repeat one, the end of the queue, a next song that changed) it goes the usual way.
+    private func ended() {
+        if repeatMode != "one", let p = prepared, let n = next, p.id == n.id, player.currentItem === p.item {
+            report("Stopped")
+            index += 1
+            prepared = nil
+            currentAV = p.item
+            triedUniversal = false
+            attach(p.item, n)
+            duration = n.seconds
+            position = 0
+            SongCache.shared.precache(queue, from: index)
+            if more != nil && queue.count - index <= 5 { topUp() }
+            report("Playing")
+            lastReport = Date()
+            setNowPlaying(n)
+            if let nn = next { Task { _ = await LyricsStore.shared.load(nn) } }
+            prepareNext()
+            return
+        }
+        nextSong(auto: true)
+    }
+
+    private func needPrep() {
+        if prepPending { return }
+        prepPending = true
+        DispatchQueue.main.async { [weak self] in self?.prepPending = false; self?.prepareNext() }
+    }
+
+    /// Queues the next song behind the playing one (from its saved copy when there is one), so it starts the moment this one ends.
+    private func prepareNext() {
+        let want = repeatMode == "one" ? nil : next
+        if let p = prepared, p.id == want?.id, player.items().contains(p.item) { return }
+        if let p = prepared { player.remove(p.item); prepared = nil }
+        guard let n = want, let cur = currentAV, player.items().contains(cur), let url = source(n, original: false) else { return }
+        let item = AVPlayerItem(url: url)
+        guard player.canInsert(item, after: cur) else { return }
+        player.insert(item, after: cur)
+        prepared = (n.id, item)
     }
 
     // MARK: server reports

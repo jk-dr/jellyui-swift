@@ -165,6 +165,10 @@ struct SongMenuItems: View {
         let fav = Favs.isFav(it)
         Button { Favs.toggle(it) } label: { Label(fav ? "Remove from favourites" : "Add to favourites", systemImage: fav ? "heart.slash" : "heart") }
         if let a = it.albumId { Button { pm.showFull = false; nav.go(.album(a)) } label: { Label("Go to album", systemImage: "square.stack") } }
+        if SongCache.shared.isSaved(it.id) {
+            Button(role: .destructive) { SongCache.shared.drop(it.id) } label: { Label("Delete my download", systemImage: "arrow.down.circle") }
+        }
+        Button(role: .destructive) { Confirm.shared.ask(DeleteSong(it: it)) } label: { Label("Delete from storage", systemImage: "trash") }
         if player {
             Button { pm.toggleShuffle() } label: { Label(pm.shuffleOn ? "Shuffle: on" : "Shuffle", systemImage: "shuffle") }
             Button { pm.cycleRepeat() } label: { Label(pm.repeatMode == "one" ? "Repeat: one song" : (pm.repeatMode == "all" ? "Repeat: all" : "Repeat: off"), systemImage: pm.repeatMode == "one" ? "repeat.1" : "repeat") }
@@ -182,6 +186,64 @@ struct EqBars: View {
                 RoundedRectangle(cornerRadius: 1).fill(Color.pink).frame(width: 3, height: 14 * (playing ? h : 0.35))
             }
         }.frame(height: 14)
+    }
+}
+
+/// A mix's picture (the web's .mixstrip): its songs' covers (104, 10 apart, round 10) drifting right to left, round and round,
+/// faded at both ends; a cover plays its song. Placeholders drift while the songs load.
+struct MixStrip: View {
+    let songs: [Item]
+    var onPlay: (Int) -> Void
+    @State private var start = Date()
+
+    var body: some View {
+        let all = Array(songs.enumerated().prefix(30))
+        var row = all
+        while !row.isEmpty && row.count < 10 { row += all }
+        let n = max(1, row.count)
+        let step: CGFloat = 114 // tile and gap
+        let half = CGFloat(n) * step
+        let period = Double(n) * 5 // the web's: 5 s a cover
+        return TimelineView(.animation) { tl in
+            let t = tl.date.timeIntervalSince(start).truncatingRemainder(dividingBy: period)
+            HStack(spacing: 10) {
+                ForEach(0..<(row.isEmpty ? 40 : n * 2), id: \.self) { k in
+                    if row.isEmpty {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color(hex: 0x18181c)).frame(width: 104, height: 104)
+                    } else {
+                        let e = row[k % n]
+                        Pic_(Pic.thumb(e.element, 312), radius: 10).frame(width: 104, height: 104)
+                            .contentShape(Rectangle()).onTapGesture { onPlay(e.offset) }
+                    }
+                }
+            }
+            .fixedSize()
+            .offset(x: -CGFloat(t / period) * half)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(height: 104)
+        .clipped()
+        .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.07), .init(color: .black, location: 0.93), .init(color: .clear, location: 1)], startPoint: .leading, endPoint: .trailing))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+/// Deleting a song's file from the server (asked first: it cannot be undone).
+struct DeleteSong: ConfirmRequest {
+    let it: Item
+    var title: String { "Delete \u{201C}\(it.title)\u{201D}?" }
+    var message: String { "This deletes the song's file from the server's storage for everyone. It can't be undone." }
+    var button: String { "Delete" }
+    func run() async {
+        do {
+            _ = try await Api.request("/Items/\(it.id)", method: "DELETE")
+            SongCache.shared.drop(it.id)
+            let pm = PlayerModel.shared
+            if let i = pm.queue.firstIndex(where: { $0.id == it.id }) { pm.remove(at: i) }
+        } catch {
+            let msg = (error as? ApiError)?.message ?? error.localizedDescription
+            await MainActor.run { Confirm.shared.ask(Notice(title: "Couldn’t delete it", message: msg)) }
+        }
     }
 }
 
@@ -603,6 +665,9 @@ struct ListScreen: View {
         Page {
             if let head {
                 VStack(alignment: .leading, spacing: 0) {
+                    if id.hasPrefix("mix-") {
+                        MixStrip(songs: songs) { pm.play(songs, at: $0) }
+                    } else {
                     Group {
                         // the Favourites playlist (made by the app) always has the red heart, never a cover from its songs
                         if id == "favourites" || isFavouritesList(head) {
@@ -620,6 +685,7 @@ struct ListScreen: View {
                     .frame(width: artW, height: artW)
                     .clipShape(RoundedRectangle(cornerRadius: kind == .artist ? artW / 2 : 12, style: .continuous))
                     .frame(maxWidth: .infinity)
+                    }
                     Text(head.title).font(.q(28)).foregroundStyle(Color.pink).shadow(color: .black, radius: 4, y: 1).lineLimit(3)
                         .multilineTextAlignment(kind == .artist ? .center : .leading).frame(maxWidth: .infinity, alignment: kind == .artist ? .center : .leading).padding(.top, 14)
                     if kind == .artist {

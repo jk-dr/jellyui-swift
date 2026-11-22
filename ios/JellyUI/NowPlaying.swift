@@ -89,10 +89,11 @@ struct MiniPlayer: View {
             }
             .padding(.leading, 13).padding(.trailing, 10).padding(.top, 10).padding(.bottom, 6)
             // Liquid Glass, like the tab bar under it (the web's corner: 20)
-            .glassEffect(.regular.tint(tint.opacity(0.6)).interactive(), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .glassEffect(.regular.tint(tint.opacity(0.6)), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .task(id: it.id) {
                 // the cover's average colour, darkened, as the web's bar does
                 guard let u = Pic.square(it, 160), let c = await CoverColours.load(u) else { return }
+                _ = await CoverInk.load(u) // ready for the full screen's first frame
                 var r: Float = 0, g: Float = 0, b: Float = 0
                 for k in stride(from: 0, to: c.count, by: 3) { r += c[k]; g += c[k + 1]; b += c[k + 2] }
                 let n = Float(max(1, c.count / 3)), dim: Float = 0.55
@@ -151,6 +152,7 @@ struct NowPlaying: View {
     /// the queue: 0 closed, 1 small (the controls risen, the list under them), 2 full (the list fills the screen); in between while a finger moves it
     @State private var qp: CGFloat = 0
     @State private var qBase: CGFloat = 0 // the level when the drag began
+    @State private var qFromButton = false // the full queue was opened by the queue button (its close button then closes it altogether)
     @State private var mode = 0 // 0 undecided, 1 closing the sheet, 2 moving the queue
     @State private var edge = false
     @State private var gestureStart: CGPoint? // where the drag under way began; nil between drags
@@ -181,8 +183,8 @@ struct NowPlaying: View {
 
         ZStack {
             Color(hex: 0x0a0a0c)
-            if late { BackdropView(cover: cover, playing: pm.isPlaying).transition(.opacity.animation(.easeIn(duration: 0.9))).allowsHitTesting(false) }
-            else { Color(red: 8 / 255, green: 8 / 255, blue: 10 / 255).opacity(0.55) }
+            // the backdrop is there from the first frame (it came in late and faded up from black)
+            BackdropView(cover: cover, playing: pm.isPlaying).allowsHitTesting(false)
             if late, let g = Grain.image { Image(uiImage: g).resizable(resizingMode: .tile).allowsHitTesting(false) }
 
             // the lyrics column: 76 under the safe area, 222 above the bottom; the sung line rests in its middle
@@ -198,13 +200,14 @@ struct NowPlaying: View {
                 }
                 .padding(.top, top + 76).padding(.bottom, 222 + bottom).padding(.trailing, 46)
                 .mask(alignment: .top) {
+                    // (the box's own padding under the lines, 222 + the bottom inset, is part of the masked area)
                     VStack(spacing: 0) {
                         Rectangle()
-                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 0.2 * min(L, g.lift))
-                        Color.clear.frame(height: min(L, g.lift))
+                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 0.2 * g.lift * min(1, qp))
+                        Color.clear.frame(height: (qp > 0 ? 222 + bottom : 0) + min(L, g.lift) / 2)
                     }
                 }
-                .offset(y: -up).opacity(qp > 1 ? Double(2 - qp) : 1)
+                .offset(y: -up - min(L, g.lift) / 2).opacity(qp > 1 ? Double(2 - qp) : 1)
                 // the strip down the right edge closes the screen from over the lyrics
                 Color.clear.contentShape(Rectangle()).frame(width: 46).frame(maxWidth: .infinity, alignment: .trailing)
                     .padding(.top, top + 76).padding(.bottom, 222 + bottom).gesture(zone(H, noQueue: true))
@@ -253,7 +256,7 @@ struct NowPlaying: View {
             }
 
             // the queue: always as tall as the full queue, moved (never resized) with the finger
-            QueuePanel(level: qp, set: { setQ($0) }, zone: zone(H, noQueue: true), top: top, bottom: bottom)
+            QueuePanel(level: qp, set: { setQ($0) }, close: { setQ(qFromButton ? 0 : 1) }, zone: zone(H, noQueue: true), top: top, bottom: bottom)
                 .frame(height: H - g.qtop).frame(maxHeight: .infinity, alignment: .bottom)
                 .offset(y: g.listY(qp))
                 .opacity(late ? Double(min(1, qp * 5)) : 0)
@@ -271,6 +274,8 @@ struct NowPlaying: View {
         .ignoresSafeArea()
         .onAppear {
             FrameMonitor.event("player", "sheet mounted")
+            // the cover's colours for the text and the edge fades, known already: the first frame has them
+            if let u = pm.current.flatMap({ Pic.square($0, 160) }), let l = CoverInk.cached(u) { look = l }
             withAnimation(.timingCurve(0.22, 0.61, 0.36, 1, duration: 0.45)) { sheetY = 0 }
             withAnimation(.easeOut(duration: 0.38)) { shown = true }
             Task {
@@ -280,6 +285,8 @@ struct NowPlaying: View {
             UIApplication.shared.isIdleTimerDisabled = true
         }
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+        // the song changed: its lines are put up in this same update (a task would run a frame later)
+        .onChange(of: it?.id) { _, _ in if let c = pm.current, let m = LyricsMemo.map[c.id] { coverOnly = false; lines = m; loading = false; lyricsFor = c.id } }
         .task(id: it?.id) { await loadSong(it) }
         .task(id: cover) { if let u = cover, let l = await CoverInk.load(u) { withAnimation(.easeInOut(duration: 0.5)) { look = l } } }
         .task(id: pm.next?.id) { if let n = pm.next, let u = Pic.square(n, 160) { _ = await CoverInk.load(u); _ = await CoverColours.load(u) } }
@@ -288,7 +295,8 @@ struct NowPlaying: View {
 
     private func loadSong(_ it: Item?) async {
         coverOnly = false
-        // the last song's lines go at once (they used to stay up until the new ones arrived)
+        // lines loaded ahead (the next song's always are) go up at once; otherwise the last song's go and the new ones load
+        if let it, let m = LyricsMemo.map[it.id] { lines = m; loading = false; lyricsFor = it.id; return }
         lines = []; loading = true; lyricsFor = it?.id
         guard let it else { loading = false; return }
         // an answer for a song that is no longer the current one must not overwrite the new song's lyrics
@@ -314,6 +322,7 @@ struct NowPlaying: View {
 
     /// the web's --qease: .27 s, cubic-bezier(.5, 0, .2, 1)
     private func setQ(_ level: CGFloat) {
+        if level < 1.5 && level > 0.5 { qFromButton = false } // the small queue: from here the full one returns to it
         withAnimation(.timingCurve(0.5, 0, 0.2, 1, duration: 0.27)) { qp = level }
         qBase = level
     }
@@ -329,7 +338,7 @@ struct NowPlaying: View {
                 if abs(v.translation.width) > abs(dy) * 1.5 && mode == 0 { return }
                 if mode == 0 {
                     if dy > 0 && qBase == 0 { mode = 1 }
-                    else if dy < 0 && (edge || (noQueue && qBase == 0)) { return }
+                    else if dy < 0 && edge { return }
                     else { mode = 2 }
                 }
                 if mode == 1 { sheetY = max(0, dy) }
@@ -367,7 +376,7 @@ struct NowPlaying: View {
                     cell { Button { if !noLyrics { withAnimation(.easeInOut(duration: 0.3)) { coverOnly.toggle() } } } label: {
                         SVGPath(d: "M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z").fill(ink.color()).frame(width: 22, height: 22).frame(width: 46, height: 46)
                     }.buttonStyle(.plain).opacity(noLyrics ? 0.3 : 1).accessibilityLabel("Lyrics") }
-                    fs("queueAdd", "Open queue") { setQ(qp > 0.5 ? 0 : 1) }
+                    fs("queueAdd", "Open queue") { qFromButton = qp < 0.5; setQ(qp > 0.5 ? 0 : 2) }
                     cell { Button { if let it { Favs.toggle(it) } } label: {
                         let on = it.map { Favs.isFav($0) } ?? false
                         SVGPath(d: "M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3z").fill(on ? ink.color() : .clear)
@@ -380,7 +389,7 @@ struct NowPlaying: View {
             .frame(width: 304).padding(.bottom, 18 + bottom).contentShape(Rectangle()).gesture(zone(H))
             // no contentShape here: the padding below the bar is part of this view, and a shape over it swallowed every tap on the buttons under it
             // no layout animation inside the bar: the sheet's opening animation slid the times in from the top-left corner
-            PlayBar(duration: pm.duration, ink: ink).transaction { $0.animation = nil }.padding(.horizontal, 14).padding(.bottom, 138 + bottom)
+            PlayBar(duration: pm.duration, ink: ink).geometryGroup().padding(.horizontal, 14).padding(.bottom, 138 + bottom)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
     }
@@ -478,6 +487,7 @@ struct PlayBar: View {
 struct QueuePanel: View {
     var level: CGFloat
     var set: (CGFloat) -> Void
+    var close: () -> Void
     var zone: AnyGesture<DragGesture.Value>
     var top: CGFloat
     var bottom: CGFloat
@@ -518,7 +528,7 @@ struct QueuePanel: View {
         }
         .overlay(alignment: .bottomTrailing) {
             // the full queue's close button: slides in from the right once it is open
-            Button { set(0) } label: {
+            Button { close() } label: {
                 Image(systemName: "xmark").font(.system(size: 20, weight: .semibold)).foregroundStyle(Color(hex: 0xf2f2f2))
                     .frame(width: 52, height: 52).background(Color(hex: 0x26262b), in: Circle())
                     .shadow(color: .black.opacity(0.45), radius: 9, y: 4)
@@ -580,6 +590,8 @@ private struct QueueRow: View {
         }
         .frame(height: 66)
         .opacity(gone ? 0 : 1)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("queue-row-\(i)")
     }
 

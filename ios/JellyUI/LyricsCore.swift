@@ -161,6 +161,10 @@ enum Lyr {
 
 // MARK: - Loading
 
+/// The loaded lyrics, readable on the main thread at once: a skip shows the next song's lines in the same frame (they are loaded ahead).
+@MainActor
+enum LyricsMemo { static var map: [String: [LyricLine]] = [:] }
+
 actor LyricsStore {
     static let shared = LyricsStore()
     private var done: [String: [LyricLine]] = [:]
@@ -183,6 +187,8 @@ actor LyricsStore {
         running[it.id] = nil
         if let r {
             done[it.id] = r
+            let id = it.id
+            await MainActor.run { LyricsMemo.map[id] = r; if LyricsMemo.map.count > 60, let k = LyricsMemo.map.keys.first(where: { $0 != id }) { LyricsMemo.map[k] = nil } }
             if done.count > 40, let k = done.keys.first { done[k] = nil }
         } else if failures[it.id] != true {
             none[it.id] = Date() // a clean "no lyrics" answer is remembered; a failed request is not

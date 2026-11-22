@@ -119,7 +119,9 @@ struct RootView: View {
             if p.showFull { NowPlaying().zIndex(20) }
         }
         .environment(nav)
-        .fullScreenCover(item: $n.play) { VideoScreen(request: $0) }
+        .modifier(ConfirmHost())
+        // a full-screen cover does not inherit the environment: the film's screen read Nav and crashed
+        .fullScreenCover(item: $n.play) { VideoScreen(request: $0).environment(nav).environment(player) }
         #if DEBUG
         .task { await Tour.apply(nav: nav, player: player) }
         #endif

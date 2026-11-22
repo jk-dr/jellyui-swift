@@ -143,7 +143,8 @@ final class SongCache {
         let s = Settings.shared
         lock.lock(); let wifi = onWifi; lock.unlock()
         guard s.songCache, !(s.songCacheWifi && !wifi), queue.indices.contains(i) else { return }
-        let ahead = queue[(i + 1)..<min(queue.count, i + 1 + max(0, s.songAhead))].map(\.id)
+        var ahead = queue[(i + 1)..<min(queue.count, i + 1 + max(0, s.songAhead))].map(\.id)
+        if i > 0 { ahead.append(queue[i - 1].id) } // the one before too: Previous plays at once
         lock.lock()
         waiting = ahead.filter { manifest[$0] == nil && !busy.contains($0) }
         lock.unlock()

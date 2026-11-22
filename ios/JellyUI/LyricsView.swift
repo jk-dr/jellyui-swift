@@ -104,15 +104,31 @@ private struct WipeRenderer: TextRenderer {
                     let n = max(1, run.count)
                     let R = min(0.45, max(0.11, 0.06 * Double(n - 1), 1.2 * dur / Double(n)))
                     let up = min(0.075, 0.035 + 0.025 * log(max(1, dur / jumpNeed(n)))) * Double(size)
+                    // each letter's lift, worked out once
+                    var lifts: [CGFloat] = []
+                    lifts.reserveCapacity(n)
                     for g in run {
                         let gr = g.typographicBounds.rect
                         let pk = max(0, min(dur, dur * Double(gr.midX - r.minX) / W))
                         let F = max(0.08, min(R * 0.75, dur - pk)), t0 = max(-0.45, pk - R)
                         let y: Double = rel < t0 || rel > pk + F ? 0 : (rel <= pk ? ease((rel - t0) / max(0.001, pk - t0)) : ease(1 - (rel - pk) / F))
-                        var c = ctx
-                        if y > 0 { c.translateBy(x: 0, y: -CGFloat(up * y)) }
-                        fill(g, rect: gr, wordX: r.minX, mid: mid, edge: edge, in: &c)
+                        lifts.append(-CGFloat(up * y))
                     }
+                    let x0 = Double(r.minX) + mid - edge / 2, x1 = x0 + edge
+                    func letters(_ c: inout GraphicsContext) {
+                        for (k, g) in run.enumerated() { var cc = c; if lifts[k] != 0 { cc.translateBy(x: 0, y: lifts[k]) }; cc.draw(g) }
+                    }
+                    // dim under (unless the whole word is lit), the lit copy over it through one mask for the word
+                    if x1 > Double(r.minX) { } else { var dmc = ctx; dmc.opacity = dim; letters(&dmc); continue }
+                    if x0 < Double(r.maxX) { var dmc = ctx; dmc.opacity = dim; letters(&dmc) }
+                    var lit = ctx
+                    if x0 < Double(r.maxX) {
+                        lit.clipToLayer { m in
+                            m.fill(Path(r.insetBy(dx: -2, dy: -size * 0.4)), with: .linearGradient(WipeRenderer.soft,
+                                startPoint: CGPoint(x: x0, y: 0), endPoint: CGPoint(x: x1, y: 0)))
+                        }
+                    }
+                    letters(&lit)
                 } else {
                     // the sung word sits 0.05 em higher: up over 0.3 s from 0.15 s before it, down over 0.32 s after it
                     let upT = 0.3, pre = 0.15, down = 0.32, top = max(upT, dur)
@@ -194,7 +210,8 @@ private struct LyricRow: View, Equatable {
         .padding(.vertical, 25)
         // the line that becomes current takes its full colour at once (a fade made the words hard to follow); the others ease
         .opacity(line.brk ? (active ? (level < 0.1 ? 0.07 : 1) : 0) : level)
-        .animation(active ? nil : .easeOut(duration: 0.3), value: level)
+        // smooth, never sudden: the line coming in brightens quickly (so it can be followed), the others ease over 0.7 s
+        .animation(active ? .easeOut(duration: 0.22) : .easeInOut(duration: 0.7), value: level)
         // out of focus: sharp at once when it comes into focus; going out, it first finishes shrinking (0.8 s), then blurs over 0.7 s
         .blur(radius: soft ? size * 0.1 : 0)
         .animation(soft ? .easeInOut(duration: 0.7).delay(0.84) : .easeOut(duration: 0.25), value: soft)
@@ -308,7 +325,7 @@ struct LyricsView: View {
                             LyricRow(
                                 ink: ink, line: l, size: 30,
                                 active: isActive || !synced,
-                                level: !playing ? 0.07 : (!synced ? 0.9 : (isActive ? 1 : (upcoming ? 0.3 : 0.15))),
+                                level: !playing ? 0.07 : (!synced ? 0.9 : (isActive || (i < idx && l.words != nil) ? 1 : (upcoming ? 0.3 : 0.15))),
                                 playing: playing && isActive,
                                 player: player,
                                 soft: synced && !l.brk && !isActive && !near,

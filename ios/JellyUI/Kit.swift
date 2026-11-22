@@ -347,6 +347,50 @@ struct ActionRow: View {
     }
 }
 
+// MARK: - Confirm (one alert for the app: menus cannot show their own)
+
+protocol ConfirmRequest {
+    var title: String { get }
+    var message: String { get }
+    var button: String { get }
+    /// a plain notice: one OK button, nothing to confirm
+    var notice: Bool { get }
+    func run() async
+}
+extension ConfirmRequest { var notice: Bool { false } }
+
+struct Notice: ConfirmRequest {
+    let title: String
+    let message: String
+    var button: String { "OK" }
+    var notice: Bool { true }
+    func run() async {}
+}
+
+@Observable
+final class Confirm {
+    static let shared = Confirm()
+    var pending: ConfirmRequest?
+    func ask(_ r: ConfirmRequest) { pending = r }
+}
+
+struct ConfirmHost: ViewModifier {
+    @State private var c = Confirm.shared
+    func body(content: Content) -> some View {
+        content.alert(c.pending?.title ?? "", isPresented: Binding(get: { c.pending != nil }, set: { if !$0 { c.pending = nil } })) {
+            if c.pending?.notice == true {
+                Button("OK", role: .cancel) { c.pending = nil }
+            } else {
+                Button("Cancel", role: .cancel) { c.pending = nil }
+                Button(c.pending?.button ?? "OK", role: .destructive) {
+                    let r = c.pending; c.pending = nil
+                    if let r { Task { await r.run() } }
+                }
+            }
+        } message: { Text(c.pending?.message ?? "") }
+    }
+}
+
 // MARK: - Saved on this device
 
 /// The web's mark for a song kept on this device: a blue edge inside the cover's corners.

@@ -45,9 +45,20 @@ struct BackdropView: View {
     @State private var b: [Float] = CoverColours.fallback
     @State private var fadeFrom: Date?
     @State private var shownCover: URL?
+
+    // the cover's colours are usually known already (the player bar loaded them): the first frame has them, no fade from grey
+    init(cover: URL?, playing: Bool, covered: Bool = false) {
+        self.cover = cover
+        self.playing = playing
+        self.covered = covered
+        let c = cover.flatMap { CoverColours.cached($0) } ?? CoverColours.fallback
+        _a = State(initialValue: c)
+        _b = State(initialValue: c)
+        _shownCover = State(initialValue: cover.flatMap { CoverColours.cached($0) != nil ? $0 : nil })
+    }
     @State private var clock = Clock()
 
-    private let divisor: CGFloat = 10
+    private let divisor: CGFloat = 4
     private let fade = 0.9
 
     /// the colour clock: only moves while a song plays, at 35 % of the web's speed
@@ -74,7 +85,7 @@ struct BackdropView: View {
                     .fill(Color.black)
                     .frame(width: w, height: h)
                     .colorEffect(ShaderLibrary.fluid(.float2(w, h), .float(clock.step(tl.date, running: playing)), .float(m), .floatArray(a), .floatArray(b)))
-                    .blur(radius: 1.2, opaque: true)
+                    .blur(radius: 0.6, opaque: true)
                     .scaleEffect(divisor)
                     .frame(width: geo.size.width, height: geo.size.height)
                     .clipped()
