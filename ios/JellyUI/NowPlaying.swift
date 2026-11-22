@@ -60,39 +60,42 @@ struct MiniPlayer: View {
     var body: some View {
         if let it = pm.current {
             let fav = Favs.isFav(it)
-            ZStack(alignment: .topLeading) {
-                Button { open() } label: {
-                    Pic_(Pic.square(it, 240), radius: 10).frame(width: 80, height: 80)
-                }.buttonStyle(.plain).offset(x: 12, y: 18)
-                Button { open() } label: {
-                    VStack(spacing: 0) {
-                        MarqueeText(text: it.title, font: .q(15), color: .pink, center: true)
-                        MarqueeText(text: it.artistLine, font: .q(12), color: Color.dimText, center: true)
-                    }.frame(height: 44)
-                }.buttonStyle(.plain).padding(.leading, 106).padding(.trailing, 62).padding(.top, 10)
-                HStack(spacing: 10) {
-                    mini("skipPrev") { pm.previous() }
-                    Button { pm.toggle() } label: {
-                        Icon(name: pm.isPlaying || pm.loading ? "pause" : "play", size: 22, color: .bg).frame(width: 44, height: 44).background(Color.pink, in: Circle())
-                    }.buttonStyle(.plain)
-                    mini("skipNext") { pm.nextSong() }
+            // the web's phone player bar: cover, name and artist, then Back / Play / Next on one row; times and the bar under it
+            VStack(spacing: 2) {
+                HStack(spacing: 12) {
+                    Button { open() } label: {
+                        HStack(spacing: 12) {
+                            Pic_(Pic.square(it, 160), radius: 8).frame(width: 52, height: 52)
+                            VStack(alignment: .leading, spacing: 1) {
+                                MarqueeText(text: it.title, font: .q(15), color: .pink)
+                                MarqueeText(text: it.artistLine, font: .q(12), color: Color.dimText)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    HStack(spacing: 4) {
+                        mini("skipPrev") { pm.previous() }
+                        Button { pm.toggle() } label: {
+                            Icon(name: pm.isPlaying || pm.loading ? "pause" : "play", size: 22, color: .bg)
+                                .frame(width: 46, height: 46).background(Color.pink, in: Circle())
+                        }.buttonStyle(PressStyle()).accessibilityLabel(pm.isPlaying ? "Pause" : "Play")
+                        mini("skipNext") { pm.nextSong() }
+                    }
                 }
-                .frame(height: 44).padding(.leading, 92).padding(.trailing, 52).padding(.top, 62).frame(maxWidth: .infinity)
-                mini("heart", color: fav ? .pink : Color(hex: 0xd4d4d4)) { Favs.toggle(it) }
-                    .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 10).padding(.top, 8)
-                Menu {
-                    Button { open() } label: { Label("Lyrics and full screen", systemImage: "music.quarternote.3") }
-                    Button { open() } label: { Label("Queue", systemImage: "list.bullet") }
-                    Button(role: .destructive) { closeAsk = true } label: { Label("Close playback", systemImage: "xmark") }
-                } label: { Icon(name: "moreV", size: 22, color: Color(hex: 0xd4d4d4)).frame(width: 38, height: 38) }
-                    .frame(maxWidth: .infinity, alignment: .trailing).padding(.trailing, 10).padding(.top, 65)
                 PlayBar(duration: pm.duration, ink: Ink(r: 248, g: 204, b: 204, a: 1), compact: true)
-                    .padding(.horizontal, 12).frame(maxHeight: .infinity, alignment: .bottom).padding(.bottom, 10)
             }
-            .frame(height: 144)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .background(Color(red: 18 / 255, green: 18 / 255, blue: 20 / 255).opacity(0.55), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .padding(.horizontal, 8).padding(.bottom, 8)
+            .padding(.leading, 13).padding(.trailing, 10).padding(.top, 10).padding(.bottom, 6)
+            .background(Color(hex: 0x1c1c1f).opacity(0.72), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Color.white.opacity(0.06), lineWidth: 0.5))
+            .padding(.horizontal, 12)
+            .contextMenu {
+                Button { Favs.toggle(it) } label: { Label(fav ? "Remove from Favourites" : "Favourite", systemImage: fav ? "heart.slash" : "heart") }
+                Button { open() } label: { Label("Lyrics and full screen", systemImage: "music.quarternote.3") }
+                Button(role: .destructive) { closeAsk = true } label: { Label("Close playback", systemImage: "xmark") }
+            }
             .gesture(DragGesture(minimumDistance: 10).onEnded { v in if v.translation.height < -40 && abs(v.translation.width) < 24 { open() } })
             .alert("Close playback?", isPresented: $closeAsk) {
                 Button("Cancel", role: .cancel) {}
@@ -203,8 +206,11 @@ struct NowPlaying: View {
                         MarqueeText(text: artist, font: .q(12), color: ink.color())
                     }.frame(minHeight: 44)
                 }
-                .padding(.horizontal, 16).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(.top, top + 14)
+                .padding(.horizontal, 16).padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                // only the header row itself catches touches (a full-screen hit area here used to swallow taps on the lyrics)
                 .contentShape(Rectangle()).gesture(zone(H))
+                .frame(maxHeight: .infinity, alignment: .top).padding(.top, top + 8)
             }
 
             controls(it, noLyrics: noLyrics, bottom: bottom, H: H)
@@ -302,7 +308,7 @@ struct NowPlaying: View {
                 HStack(spacing: 0) {
                     // the lyrics button (new in the Swift app): shows or hides the lyrics
                     cell { Button { if !noLyrics { withAnimation(.easeInOut(duration: 0.3)) { coverOnly.toggle() } } } label: {
-                        Image(systemName: coverOnly || noLyrics ? "quote.bubble" : "quote.bubble.fill").font(.system(size: 22)).foregroundStyle(ink.color()).frame(width: 46, height: 46)
+                        Image(systemName: "music.note").font(.system(size: 21, weight: .semibold)).foregroundStyle(ink.color()).frame(width: 46, height: 46)
                     }.buttonStyle(.plain).opacity(noLyrics ? 0.3 : 1) }
                     fs("queueAdd", "Open queue") { toggleQueue(true, H) }
                     cell { Button { if let it { Favs.toggle(it) } } label: {
