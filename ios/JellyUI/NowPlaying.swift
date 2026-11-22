@@ -562,7 +562,16 @@ struct QueuePanel: View {
                     }
                     .padding(.horizontal, 12).padding(.top, 40)
                 }
-                .mask(LinearGradient(stops: [.init(color: full ? .clear : .black, location: 0), .init(color: .black, location: 22 / max(1, UIScreen.main.bounds.height))], startPoint: .top, endPoint: .bottom))
+                // the small queue hides the 40 kept above the playing song (the song before it showed there, behind the buttons);
+                // the full queue fades its top 22 instead. In between, one turns into the other with the level.
+                .mask {
+                    let k = max(0, min(1, level - 1))
+                    VStack(spacing: 0) {
+                        Color.clear.frame(height: 40 * (1 - k))
+                        LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom).frame(height: max(1, 22 * k))
+                        Color.black
+                    }
+                }
                 .onScrollPhaseChange { _, p in touching = p == .interacting || p == .tracking }
                 .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { old, y in
                     // only the person's own scrolling moves the queue: pulled down past the top, down a level; scrolled up from the small queue, the full queue
