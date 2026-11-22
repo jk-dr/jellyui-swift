@@ -66,7 +66,11 @@ enum Lyr {
             let back: [LyricWord]? = words != nil && !(l.back?.isEmpty ?? true)
                 ? Lyr.joinSyllables(Lyr.capitalFirst(l.back!.map { LyricWord(t: $0.t, e: $0.e, w: $0.w.replacingOccurrences(of: "(", with: "").replacingOccurrences(of: ")", with: "")) }))
                 : nil
-            return LyricLine(text: l.text ?? "", t: l.t, e: l.e, words: words, back: back)
+            // backing vocals sung before the line's own words: the line starts with them, so they fill as they are sung
+            // (they waited, unlit, until the main words made the line current)
+            var start = l.t
+            if let b = back?.first?.t, let s0 = start, b < s0 { start = b }
+            return LyricLine(text: l.text ?? "", t: start, e: l.e, words: words, back: back)
         }
     }
 
