@@ -258,6 +258,13 @@ private struct Dots: View {
     }
 }
 
+/// Watches the player's position while paused: a seek then redraws the sung row.
+private struct SeekWatch: View {
+    let player: PlayerModel
+    let changed: () -> Void
+    var body: some View { Color.clear.onChange(of: player.position) { _, _ in changed() } }
+}
+
 // MARK: - The column
 
 struct LyricsView: View {
@@ -332,7 +339,8 @@ struct LyricsView: View {
             .onChange(of: lines.first?.id) { _, _ in start() }
             .onChange(of: playing) { _, _ in start() } // a resume or a seek wakes the clock at once
             // a seek (a row tap or the bar) while paused: the paused sung row is redrawn, as it is not on a timeline
-            .onChange(of: player.position) { _, _ in if !playing { seekTick += 1 } }
+            // only this tiny view reads the position (it changes twice a second): the column itself is not redrawn for it
+            .background { if !playing { SeekWatch(player: player) { seekTick += 1 } } }
             .onDisappear { clock.stop() }
         }
     }

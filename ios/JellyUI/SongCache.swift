@@ -66,6 +66,9 @@ final class SongCache {
         let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         dir = base.appendingPathComponent("songs", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // songs can be fetched again: they are left out of iCloud and computer backups
+        var rv = URLResourceValues(); rv.isExcludedFromBackup = true
+        var d0 = dir; try? d0.setResourceValues(rv)
         if let d = UserDefaults.standard.data(forKey: "songcache"), let m = try? JSONDecoder().decode([String: Entry].self, from: d) { manifest = m } else { manifest = [:] }
         // the manifest and the folder agree: a file with no entry (the app quit before the save) is removed, an entry with no file is dropped
         let onDisk = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
@@ -124,13 +127,45 @@ final class SongCache {
         save()
     }
 
-    /// Saves this song and the next few in the queue (when the setting is on, and on Wi-Fi if it says so).
+    private var waiting: [String] = []
+    private var running = 0
+    private var currentTimer: DispatchWorkItem?
+
+    /// Saves the songs that will play next, and (a few seconds in, so it does not slow the start) the one playing:
+    /// when the setting is on, and on Wi-Fi if it says so. Two downloads at a time; songs that left the window are not fetched.
     func precache(_ queue: [Item], from i: Int) {
         let s = Settings.shared
         lock.lock(); let wifi = onWifi; lock.unlock()
-        guard s.songCache, !(s.songCacheWifi && !wifi) else { return }
-        let upto = min(queue.count, i + 1 + max(0, s.songAhead))
-        for k in i..<upto where queue.indices.contains(k) { download(queue[k].id) }
+        guard s.songCache, !(s.songCacheWifi && !wifi), queue.indices.contains(i) else { return }
+        let ahead = queue[(i + 1)..<min(queue.count, i + 1 + max(0, s.songAhead))].map(\.id)
+        lock.lock()
+        waiting = ahead.filter { manifest[$0] == nil && !busy.contains($0) }
+        lock.unlock()
+        pump()
+        currentTimer?.cancel()
+        let cur = queue[i].id
+        let w = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            if self.manifest[cur] == nil && !self.busy.contains(cur) && !self.waiting.contains(cur) { self.waiting.insert(cur, at: 0) }
+            self.lock.unlock()
+            self.pump()
+        }
+        currentTimer = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: w)
+    }
+
+    private func pump() {
+        lock.lock()
+        var start: [String] = []
+        while running < 2, !waiting.isEmpty {
+            let id = waiting.removeFirst()
+            if manifest[id] != nil || busy.contains(id) { continue }
+            running += 1
+            start.append(id)
+        }
+        lock.unlock()
+        for id in start { download(id) }
     }
 
     private func download(_ id: String) {
@@ -138,12 +173,16 @@ final class SongCache {
         // read on the caller's thread (the main thread), not on the download's
         let limit = Settings.shared.songCacheMb * 1_048_576
         lock.lock()
-        if manifest[id] != nil || busy.contains(id) { lock.unlock(); return }
         busy.insert(id)
         lock.unlock()
-        URLSession.shared.downloadTask(with: url) { [weak self] tmp, resp, _ in
+        var req = URLRequest(url: url)
+        req.networkServiceType = .background // the stream that is playing goes first
+        URLSession.shared.downloadTask(with: req) { [weak self] tmp, resp, _ in
             guard let self else { return }
-            defer { self.lock.lock(); self.busy.remove(id); self.lock.unlock() }
+            defer {
+                self.lock.lock(); self.busy.remove(id); self.running = max(0, self.running - 1); self.lock.unlock()
+                self.pump()
+            }
             guard let tmp, let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return }
             self.lock.lock()
             self.exts[id] = SongCache.ext(for: http.value(forHTTPHeaderField: "Content-Type"), url: nil)

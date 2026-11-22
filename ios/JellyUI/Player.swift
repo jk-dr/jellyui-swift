@@ -31,6 +31,10 @@ final class PlayerModel {
     @ObservationIgnored private var lastReport = Date.distantPast
     @ObservationIgnored private var artworkTask: Task<Void, Never>?
     @ObservationIgnored private var resumeAfterInterruption = false
+    /// the person wants sound (set by play / toggle on, cleared by pause / stop): read when a call ends, as the player itself is already paused by then
+    @ObservationIgnored private var wantsPlay = false
+    /// songs in a row that would not play: after a few the queue stops skipping (no signal would otherwise drain the whole queue)
+    @ObservationIgnored private var failedInARow = 0
     /// bumped when the queue is replaced: a fetch started for the old queue then adds nothing to the new one
     @ObservationIgnored private var queueGeneration = 0
     /// the song ended at the end of the queue while more songs were on their way (the value is `auto`)
@@ -48,6 +52,7 @@ final class PlayerModel {
     init() {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
         try? AVAudioSession.sharedInstance().setActive(true)
+        player.automaticallyWaitsToMinimizeStalling = false // start as soon as the first piece of the song is in
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] t in
             guard let self else { return }
             let s = t.seconds
@@ -154,7 +159,15 @@ final class PlayerModel {
     }
 
     func remove(at i: Int) {
-        guard queue.indices.contains(i), i != index else { return }
+        guard queue.indices.contains(i) else { return }
+        if i == index {
+            // the playing song: the next one takes its place (the end of the queue stops playback)
+            report("Stopped")
+            queue.remove(at: i)
+            if index >= queue.count { stop(); return }
+            load()
+            return
+        }
         queue.remove(at: i)
         if i < index { index -= 1 }
     }
@@ -171,7 +184,7 @@ final class PlayerModel {
         // at the end of an endless queue: wait for the songs on their way (topUp carries on from here)
         if fetchingMore { pendingEnd = auto; return }
         if repeatMode == "all" && !queue.isEmpty { jump(to: 0) }
-        else if auto { report("Stopped"); player.pause(); isPlaying = false; seek(to: 0) }
+        else if auto { report("Stopped"); wantsPlay = false; player.pause(); isPlaying = false; seek(to: 0) }
         else { stop() }
     }
 
@@ -180,11 +193,11 @@ final class PlayerModel {
     }
 
     func toggle() {
-        if player.timeControlStatus == .paused { player.play() } else { player.pause() }
+        if player.timeControlStatus == .paused { wantsPlay = true; player.play() } else { wantsPlay = false; player.pause() }
     }
 
-    func play() { player.play() }
-    func pause() { player.pause() }
+    func play() { wantsPlay = true; player.play() }
+    func pause() { wantsPlay = false; player.pause() }
 
     func seek(to s: Double) {
         player.seek(to: CMTime(seconds: max(0, s), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
@@ -195,6 +208,9 @@ final class PlayerModel {
         report("Stopped")
         resetQueueState()
         more = nil
+        wantsPlay = false
+        loading = false
+        artworkTask?.cancel(); artworkTask = nil
         player.pause()
         player.replaceCurrentItem(with: nil)
         queue = []
@@ -214,15 +230,17 @@ final class PlayerModel {
 
     private func load(universal: Bool = false) {
         guard let it = current else { return }
+        // `universal` here means the second try: the original file as it is
         triedUniversal = universal
         let url: URL?
         if universal {
+            url = Api.keyed("/Audio/\(it.id)/stream", ["static": true, "deviceId": Session.shared.deviceId])
+        } else {
+            // a song not saved yet streams in pieces: mp3 / aac as they are, anything else (flac, wav) as a 320k mp3 that starts at once
             url = Api.keyed("/Audio/\(it.id)/universal", [
-                "userId": Api.uid, "deviceId": Session.shared.deviceId, "container": "mp3,aac,m4a,flac,wav",
+                "userId": Api.uid, "deviceId": Session.shared.deviceId, "container": "mp3,aac,m4a|aac,m4b|aac,mp4|aac",
                 "transcodingContainer": "mp3", "transcodingProtocol": "http", "audioCodec": "mp3", "maxStreamingBitrate": 320000,
             ])
-        } else {
-            url = Api.keyed("/Audio/\(it.id)/stream", ["static": true, "deviceId": Session.shared.deviceId])
         }
         guard let url = (universal ? nil : SongCache.shared.cached(it.id)) ?? url else { return }
         SongCache.shared.precache(queue, from: index)
@@ -238,10 +256,16 @@ final class PlayerModel {
                 guard let self, self.player.currentItem === i else { return }
                 if i.status == .failed {
                     SongCache.shared.drop(it.id) // a saved copy that will not play is forgotten
-                    if !self.triedUniversal { self.load(universal: true) } else { self.nextSong() }
+                    if !self.triedUniversal { self.load(universal: true); return }
+                    self.failedInARow += 1
+                    // a few songs in a row that will not play (no signal): stop here, paused, instead of skipping through the whole queue
+                    if self.failedInARow >= 3 { self.loading = false; self.wantsPlay = false; self.player.pause(); return }
+                    self.nextSong()
+                    return
                 }
                 if i.status != .unknown { self.loading = false }
                 if i.status == .readyToPlay {
+                    self.failedInARow = 0
                     let d = i.duration.seconds
                     if d.isFinite && d > 0 { self.duration = d }
                 }
@@ -252,6 +276,7 @@ final class PlayerModel {
         loading = true
         if more != nil && queue.count - index <= 5 { topUp() }
         player.replaceCurrentItem(with: avItem)
+        wantsPlay = true
         player.play()
         report("Playing")
         lastReport = Date()
@@ -287,12 +312,16 @@ final class PlayerModel {
             MPNowPlayingInfoPropertyPlaybackRate: 1.0,
         ]
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        refreshLike(it)
         artworkTask?.cancel()
         artworkTask = Task {
             guard let u = Pic.square(it, 600), let img = await ImageStore.shared.load(u), !Task.isCancelled else { return }
-            var out = info
-            out[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: img.size) { _ in img }
-            await MainActor.run { MPNowPlayingInfoCenter.default().nowPlayingInfo = out }
+            await MainActor.run {
+                // only the artwork is added to what the lock screen shows now, and only for the song still playing
+                guard self.current?.id == it.id, var cur = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
+                cur[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: img.size) { _ in img }
+                MPNowPlayingInfoCenter.default().nowPlayingInfo = cur
+            }
         }
     }
 
@@ -331,12 +360,30 @@ final class PlayerModel {
                 m.toggle()
             }
         })
-        c.nextTrackCommand.addTarget(handler: remote { m, _ in m.nextSong() })
-        c.previousTrackCommand.addTarget(handler: remote { m, _ in m.previous() })
+        // while a film plays these do nothing: they must not start a song over it
+        c.nextTrackCommand.addTarget(handler: remote { m, _ in if m.video == nil { m.nextSong() } })
+        c.previousTrackCommand.addTarget(handler: remote { m, _ in if m.video == nil { m.previous() } })
+        // the favourite (heart) among the lock screen's controls
+        c.likeCommand.isEnabled = true
+        c.likeCommand.localizedTitle = "Add to favourites"
+        c.likeCommand.localizedShortTitle = "Favourite"
+        c.likeCommand.addTarget(handler: remote { m, _ in
+            guard let it = m.current else { return }
+            Favs.toggle(it)
+            m.refreshLike(it)
+        })
         c.changePlaybackPositionCommand.addTarget(handler: remote { m, e in
             guard let e = e as? MPChangePlaybackPositionCommandEvent else { return }
             if let v = m.video { v.seek(to: CMTime(seconds: e.positionTime, preferredTimescale: 600)) } else { m.seek(to: e.positionTime) }
         })
+    }
+
+    /// The lock screen's heart shows whether the playing song is a favourite.
+    func refreshLike(_ it: Item) {
+        let on = Favs.isFav(it)
+        let c = MPRemoteCommandCenter.shared().likeCommand
+        c.isActive = on
+        c.localizedTitle = on ? "Remove from favourites" : "Add to favourites"
     }
 
     /// A call or another app takes the audio: pause, and resume only if the system says the audio may come back.
@@ -345,7 +392,7 @@ final class PlayerModel {
         guard let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
         switch type {
         case .began:
-            resumeAfterInterruption = isPlaying || player.rate != 0
+            resumeAfterInterruption = wantsPlay
             player.pause()
         case .ended:
             let options = AVAudioSession.InterruptionOptions(rawValue: n.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0)
@@ -378,6 +425,8 @@ final class Favs {
     static func toggle(_ it: Item) {
         let was = isFav(it)
         set(it.id, !was)
+        let pm = PlayerModel.shared
+        if pm.current?.id == it.id { pm.refreshLike(it) }
         Task {
             await Api.setFavourite(it.id, !was)
         }

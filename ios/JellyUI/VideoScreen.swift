@@ -422,7 +422,10 @@ struct Stage: View {
                 if i.status == .failed {
                     if errRetries < 2 && !pb.isLive {
                         errRetries += 1; swapMsg = "Reconnecting…"
-                        Task { try? await pb.open(pb.itemId, at: max(lastGood - 2, 0)) }
+                        Task {
+                            do { try await pb.open(pb.itemId, at: max(lastGood - 2, 0)) }
+                            catch { swapMsg = ""; buffering = false; playErr = (error as? ApiError)?.message ?? "Playback error" }
+                        }
                     } else { buffering = false; playErr = i.error?.localizedDescription ?? "Playback error" }
                 }
             }
@@ -470,7 +473,10 @@ struct Stage: View {
         if pb.isLive { return }
         // the stream stopped early (still downloading), not the end of the film
         if pb.duration > 0, now < pb.duration - 15, pb.downloaded > 0, pb.downloaded < 99 {
-            Task { try? await pb.open(pb.itemId, at: max(0, now - 2)) }
+            Task {
+                do { try await pb.open(pb.itemId, at: max(0, now - 2)) }
+                catch { buffering = false; playErr = (error as? ApiError)?.message ?? "Playback error" }
+            }
             return
         }
         reportStop()

@@ -388,9 +388,11 @@ struct PlayBar: View {
     let ink: Ink
     var compact = false
     @Environment(PlayerModel.self) private var pm
-    @State private var drag: Double?
+    // a drag that is cancelled (Control Center, a call) resets by itself
+    @GestureState private var drag: Double?
 
     var body: some View {
+        let _ = pm.position // a seek while paused redraws the bar (the timelines below are paused then)
         HStack(spacing: 8) {
             TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: !pm.isPlaying && drag == nil)) { _ in
                 Text(timeText(drag.map { $0 * duration } ?? min(pm.now, duration > 0 ? duration : pm.now))).font(.system(size: 11)).monospacedDigit()
@@ -406,11 +408,12 @@ struct PlayBar: View {
                     }.frame(height: compact ? 20 : 40)
                 }
                 .contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 0).onChanged { v in drag = Double(max(0, min(1, v.location.x / max(1, g.size.width)))) }
+                .gesture(DragGesture(minimumDistance: 0)
+                    .updating($drag) { v, st, _ in st = Double(max(0, min(1, v.location.x / max(1, g.size.width)))) }
                     .onEnded { v in
+                        guard duration > 0 else { return } // no length yet: a seek would restart the song
                         let f = Double(max(0, min(1, v.location.x / max(1, g.size.width))))
                         pm.seek(to: f * duration)
-                        drag = nil
                     })
             }.frame(height: compact ? 20 : 40).padding(.horizontal, 6)
             Text(timeText(duration)).font(.system(size: 11)).monospacedDigit().foregroundStyle(ink.color()).frame(minWidth: 34, alignment: .trailing)

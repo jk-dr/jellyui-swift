@@ -29,6 +29,7 @@ enum Tour {
         case "settings": nav.tab = .settings
         case "search": nav.searching = true
         case "movie": if let i = await first("Movie") { nav.go(.movie(i.id)) }
+        case "video": if let i = await first("Movie") { nav.play = PlayRequest(itemId: i.id) }
         case "show": if let i = await first("Series") { nav.go(.show(i.id)) }
         case "album": if let i = await first("MusicAlbum") { nav.go(.album(i.id)) }
         case "artist": if let i = await first("MusicArtist") { nav.go(.artist(i.id)) }

@@ -97,6 +97,7 @@ func defaultBurnIndex(_ ms: MSource) -> Int {
 
 // MARK: - The playback session (what the web's playback.ts did)
 
+@MainActor
 @Observable
 final class VideoModel {
     enum Phase { case loading, gate, ready, error }
@@ -150,8 +151,11 @@ final class VideoModel {
         source = nil; ms = nil; subIndex = -1; audioIndex = -1; downloaded = 0
         prevId = nil; nextId = nil; gate = nil; error = ""
         phase = .loading; message = "Opening the stream…"
-        do { try await startItem(id); pendingId = nil }
-        catch { phase = .error; self.error = (error as? ApiError)?.message ?? error.localizedDescription }
+        do { try await startItem(id); if request.itemId == id { pendingId = nil } }
+        catch {
+            guard request.itemId == id else { return } // an episode the person has already moved on from
+            phase = .error; self.error = (error as? ApiError)?.message ?? error.localizedDescription
+        }
     }
 
     func start() async {
@@ -170,8 +174,12 @@ final class VideoModel {
 
     // MARK: an item in the library
 
+    /// a later switch to another episode has replaced this one: its answers are dropped
+    private func stale(_ id: String) -> Bool { if let r = request.itemId { return r != id }; return false }
+
     private func startItem(_ id: String) async throws {
         var it = try await Api.item(id)
+        if stale(id) { return }
         if it.type == "TvChannel", let ch: Item = try? await Api.get("/LiveTv/Channels/\(it.id)", ["userId": Api.uid]) { it.currentProgram = ch.currentProgram }
         fromItem(it)
         let tm = (isEpisode || isLive) ? "" : (it.providerIds?["tmdb"] ?? "")
@@ -186,7 +194,7 @@ final class VideoModel {
                 try await waitForGate(tm)
             }
         }
-        if gone { return }
+        if gone || stale(id) { return }
         phase = .loading; message = "Opening the stream…"
         try await open(it.id, at: startSec, auto: !isLive)
         if !tm.isEmpty { pollDownloaded(tm) }
@@ -385,7 +393,7 @@ final class VideoModel {
     func open(_ id: String, at start: Double, sub: Int? = nil, audio: Int? = nil, bitrate: Int? = nil, auto: Bool = false) async throws {
         let o = (sub: sub ?? subIndex, audio: audio ?? audioIndex, bitrate: bitrate ?? maxBitrate)
         let pi = try await playbackInfo(id, sub: o.sub, audio: o.audio, bitrate: o.bitrate)
-        if gone { return }
+        if gone || stale(id) { return }
         guard let first = (pi["MediaSources"] as? [[String: Any]])?.first, let ms = MSource(first) else { throw ApiError(status: 0, message: "No playable file found") }
         guard let src = sourceFor(ms, pi, id, o.bitrate) else { throw ApiError(status: 0, message: "This file can’t be played on this device") }
         // a picture subtitle chosen by default is burnt in from the first request
