@@ -85,18 +85,21 @@ struct BackdropView: View {
     }
 
     private func change() async {
-        guard let cover, cover != shownCover, let cols = await CoverColours.load(cover) else { return }
-        defer { shownCover = cover }
+        guard let cover, cover != shownCover, let cols = await CoverColours.load(cover), !Task.isCancelled else { return }
         if shownCover == nil {
             a = cols
             b = cols
+            shownCover = cover
             return
         }
-        // cross-fade: B takes the new cover while the mix goes 0 -> 1, then A takes it
+        // cross-fade: B takes the new cover while the mix goes 0 -> 1, then A takes it.
+        // A cover that changed again mid-fade (task cancelled) must not overwrite the newer one.
         b = cols
         fadeFrom = Date()
         try? await Task.sleep(nanoseconds: UInt64((fade + 0.1) * 1_000_000_000))
+        guard !Task.isCancelled else { return }
         a = cols
         fadeFrom = nil
+        shownCover = cover
     }
 }

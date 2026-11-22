@@ -36,7 +36,8 @@ enum Tour {
         case "mini", "nowplaying", "lyrics", "queue":
             // a song that has lyrics if the server knows one, else any song
             let song = (try? await Api.items(["IncludeItemTypes": "Audio", "Recursive": true, "SortBy": "Random", "Limit": 1, "HasLyrics": true]).first) ?? nil
-            let fallback = song == nil ? await first("Audio") : nil
+            var fallback: Item? = nil
+            if song == nil { fallback = await first("Audio") }
             guard let s = song ?? fallback else { return }
             player.play([s])
             if r != "mini" { try? await Task.sleep(for: .seconds(1)); player.showFull = true }

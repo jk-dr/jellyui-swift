@@ -28,11 +28,27 @@ struct SVGPath: Shape {
     var box: CGFloat = 24
 
     func path(in rect: CGRect) -> Path {
-        var parser = SVGParser(d)
-        var p = parser.parse()
+        var p = PathCache.path(d)
         let s = min(rect.width, rect.height) / box
         p = p.applying(CGAffineTransform(scaleX: s, y: s))
         return p.offsetBy(dx: rect.minX, dy: rect.minY)
+    }
+}
+
+/// Parsed glyphs, kept: a list draws the same few icons for every row, so each is parsed once.
+private enum PathCache {
+    private static var store: [String: Path] = [:]
+    private static let lock = NSLock()
+
+    static func path(_ d: String) -> Path {
+        lock.lock()
+        defer { lock.unlock() }
+        if let p = store[d] { return p }
+        var parser = SVGParser(d)
+        let p = parser.parse()
+        if store.count > 300 { store.removeAll() }
+        store[d] = p
+        return p
     }
 }
 
@@ -77,6 +93,8 @@ private struct SVGParser {
             skip()
             if i >= chars.count { break }
             if chars[i].isLetter { cmd = chars[i]; i += 1 }
+            // a close takes no numbers, so numbers after it are not its own: stop rather than close forever
+            else if cmd == "Z" || cmd == "z" { break }
             let rel = cmd.isLowercase
             var nc: CGPoint? = nil
             var nq: CGPoint? = nil
@@ -168,6 +186,7 @@ private struct SVGParser {
         }
         let th1 = ang(1, 0, (x1 - cxp) / rx, (y1 - cyp) / ry)
         var dth = ang((x1 - cxp) / rx, (y1 - cyp) / ry, (-x1 - cxp) / rx, (-y1 - cyp) / ry)
+        guard dth.isFinite else { path.addLine(to: p1); return } // Int(NaN) below would trap
         if !sweep && dth > 0 { dth -= 2 * .pi }
         if sweep && dth < 0 { dth += 2 * .pi }
         let n = max(1, Int(ceil(abs(dth) / (.pi / 2))))

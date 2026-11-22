@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 extension Api {
     static func suggestions(_ kind: String, limit: Int = 8) async -> [Item] {
@@ -349,12 +350,14 @@ struct CollectionScreen: View {
 
     private func load() async {
         loading = true
+        errorText = nil
         defer { loading = false }
         do {
-            let r = service ? try await Plugin.service(id) : try await Plugin.genre(id)
+            let r: Collection = try await (service ? Plugin.service(id) : Plugin.genre(id))
             name = r.name ?? ""
             if let l = r.logo { logo = l; logoKind = r.kind }
-            tiles = r.items ?? []
+            var seen = Set<String>()
+            tiles = (r.items ?? []).filter { seen.insert($0.id).inserted }
             nextPage = (r.pages ?? 1) + 1
             finished = false
         } catch let e as ApiError {

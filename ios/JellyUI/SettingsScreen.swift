@@ -207,12 +207,17 @@ struct SettingsScreen: View {
         } message: { Text("Enter the code shown on the other device.") }
         .alert("Sign out?", isPresented: $signOutAsk) {
             Button("Cancel", role: .cancel) {}
-            Button("Sign out", role: .destructive) { PlayerModel.shared.stop(); Task { _ = try? await Api.request("/Sessions/Logout", method: "POST", quiet: true); await MainActor.run { session.signOut() } } }
+            Button("Sign out", role: .destructive) {
+                PlayerModel.shared.stop()
+                // what the last account showed must not show for the next one
+                Mem.clear(); Favs.shared.map = [:]; PlaylistCache.shared.clear()
+                Task { _ = try? await Api.request("/Sessions/Logout", method: "POST", quiet: true); await MainActor.run { session.signOut() } } }
         }
         .alert("Delete the saved songs?", isPresented: $clearAsk) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) { SongCache.shared.clear(); stats = SongCache.shared.stats() }
         } message: { Text("They will be saved again as you play them.") }
+        .onAppear { stats = SongCache.shared.stats() }
     }
 
     private func quickConnect() async {
@@ -227,7 +232,13 @@ struct SettingsScreen: View {
     private func shareLog() {
         DebugLog.flush()
         let av = UIActivityViewController(activityItems: [DebugLog.text()], applicationActivities: nil)
-        Insets.window?.rootViewController?.presentedViewController.map { $0.present(av, animated: true) } ?? Insets.window?.rootViewController?.present(av, animated: true)
+        guard let root = Insets.window?.rootViewController else { return }
+        // on iPad the sheet needs an anchor, or UIKit raises an exception
+        if let pop = av.popoverPresentationController {
+            pop.sourceView = root.view
+            pop.sourceRect = CGRect(x: root.view.bounds.midX, y: root.view.bounds.maxY - 60, width: 1, height: 1)
+        }
+        (root.presentedViewController ?? root).present(av, animated: true)
     }
 }
 

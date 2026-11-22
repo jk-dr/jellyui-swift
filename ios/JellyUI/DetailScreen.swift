@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// One shape for a library item and a Seerr title.
 struct DModel {
@@ -216,16 +217,23 @@ struct DetailScreen: View {
 
     // MARK: loading and actions
 
+    /// Replaces this page with a library copy of the same title. Pops this page only if it is still the top of the tab it opened in.
+    private func redirectHere(_ dest: Route, _ route: Route, _ tab: RootTab) {
+        if nav.tab == tab, nav.paths[tab]?.last == route { nav.paths[tab]?.removeLast() }
+        if nav.tab == tab { nav.go(dest) } else { nav.paths[tab, default: []].append(dest) }
+    }
+
     private func load() async {
         error = nil
+        let tab = nav.tab
+        let route: Route = show ? .show(id) : .movie(id)
         if !tmdbParam.isEmpty {
             do {
                 let t = try await Plugin.title(show ? "tv" : "movie", tmdbParam)
                 // a Seerr title that is in the library after all: open the library page instead
                 if let jf = t.jellyfinId, !redirected {
                     redirected = true
-                    nav.path.removeLast()
-                    nav.go(show ? .show(jf) : .movie(jf))
+                    redirectHere(show ? .show(jf) : .movie(jf), route, tab)
                     return
                 }
                 title = t
@@ -237,8 +245,7 @@ struct DetailScreen: View {
                 // a library movie that is only an on-demand stub: open the title page
                 if !show, it.mediaSources == nil, let tm, !redirected {
                     redirected = true
-                    nav.path.removeLast()
-                    nav.go(.movie("tmdb-" + tm))
+                    redirectHere(.movie("tmdb-" + tm), route, tab)
                     return
                 }
                 item = it
@@ -266,6 +273,8 @@ struct DetailScreen: View {
                 let st: String = (low["status"] as? Int).flatMap { names.indices.contains($0) ? names[$0] : nil } ?? (low["status"] as? String) ?? ""
                 let gate = (low["gate"] as? [String: Any])?.first { $0.key.lowercased() == "open" }?.value as? Bool ?? false
                 waiting = ["Requested", "Grabbing", "Preparing", "Streaming", "Downloading"].contains(st) && !gate
+                // finished, failed or cancelled: nothing more to wait for, stop polling
+                if ["InLibrary", "Failed", "Cancelled"].contains(st) { return }
             }
             try? await Task.sleep(nanoseconds: 5_000_000_000)
         }
@@ -431,14 +440,21 @@ struct SeasonsView: View {
         guard seasons.indices.contains(cur) else { return }
         let s = seasons[cur]
         loading = true; err = nil
-        defer { loading = false }
+        // a cancelled load (the season changed) must not clear the state the new load is setting
+        defer { if !Task.isCancelled { loading = false } }
         if lib, let jf = m.jf {
-            let r = (try? await Api.episodes(jf, season: s.id)) ?? []
-            eps = r.map { ep in
+            do {
+                let r = try await Api.episodes(jf, season: s.id)
+                if Task.isCancelled { return }
+                eps = r.map { ep in
                 let pos = ep.userData?.playbackPositionTicks ?? 0
                 let total = ep.runTimeTicks ?? 0
                 let pct = ep.userData?.played == true ? 100 : (total > 0 && pos > 0 ? Double(pos) / Double(total) * 100 : 0)
                 return Ep(id: ep.id, jf: ep.id, n: ep.indexNumber, name: ep.title, overview: ep.overview, min: total > 0 ? Int((Double(total) / 600_000_000).rounded()) : nil, pct: pct, img: Pic.episodeThumb(ep))
+                }
+            } catch {
+                if Task.isCancelled { return }
+                err = error.localizedDescription
             }
         } else if let t = m.tmdb, let n = s.n {
             let r = await Plugin.season(t, n)

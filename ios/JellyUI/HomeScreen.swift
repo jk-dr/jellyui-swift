@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 extension Color {
     /// hsl(h, s%, l%) as the web's style sheet writes it
@@ -443,9 +444,13 @@ struct PendingRequestsView: View {
             Text("Pending requests").font(.q(20)).foregroundStyle(Color.pink).padding(.top, 18).padding(.leading, 16)
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(items) { r in
-                    let meta = (r.type == "tv" ? "Series" : "Movie") + ((r.year ?? "").isEmpty ? "" : " · \(r.year!)")
-                        + (r.type == "tv" && !(r.seasons ?? []).isEmpty ? " · Season\(r.seasons!.count > 1 ? "s" : "") \(r.seasons!.map(String.init).joined(separator: ", "))" : "")
-                        + (r.is4k == true ? " · 4K" : "")
+                    let kind: String = r.type == "tv" ? "Series" : "Movie"
+                    let yr: String = (r.year ?? "").isEmpty ? "" : " · " + (r.year ?? "")
+                    let seasonNums: [Int] = r.type == "tv" ? (r.seasons ?? []) : []
+                    let seasonList: String = seasonNums.map { String($0) }.joined(separator: ", ")
+                    let seasonText: String = seasonNums.isEmpty ? "" : " · Season" + (seasonNums.count > 1 ? "s " : " ") + seasonList
+                    let hd: String = r.is4k == true ? " · 4K" : ""
+                    let meta: String = kind + yr + seasonText + hd
                     HStack(alignment: .top, spacing: 12) {
                         Pic_(Pic.tmdb(r.poster, "w185"), radius: 7.2).frame(width: 64, height: 96)
                         VStack(alignment: .leading, spacing: 2.4) {

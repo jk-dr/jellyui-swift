@@ -133,6 +133,8 @@ final class VideoModel {
     @ObservationIgnored private var busyAskedAt = Date.distantPast
     @ObservationIgnored var request: PlayRequest
     @ObservationIgnored private var tasks: [Task<Void, Never>] = []
+    /// the episode the user last asked for and that has not opened yet (nil once it has)
+    @ObservationIgnored var pendingId: String?
 
     init(_ r: PlayRequest) { request = r }
 
@@ -143,11 +145,12 @@ final class VideoModel {
     func switchTo(_ id: String) async {
         tasks.forEach { $0.cancel() }
         tasks = []
+        pendingId = id
         request = PlayRequest(itemId: id)
         source = nil; ms = nil; subIndex = -1; audioIndex = -1; downloaded = 0
         prevId = nil; nextId = nil; gate = nil; error = ""
         phase = .loading; message = "Opening the stream…"
-        do { try await startItem(id) }
+        do { try await startItem(id); pendingId = nil }
         catch { phase = .error; self.error = (error as? ApiError)?.message ?? error.localizedDescription }
     }
 
@@ -213,7 +216,8 @@ final class VideoModel {
         favourite = it.isFavourite
         if ep, let sid = it.seriesId {
             tasks.append(Task {
-                if let r: ItemsResult = try? await Api.get("/Shows/\(sid)/Episodes", ["userId": Api.uid]) {
+                // a lookup cancelled by a switch to another episode must not write its neighbours onto this one
+                if let r: ItemsResult = try? await Api.get("/Shows/\(sid)/Episodes", ["userId": Api.uid]), !Task.isCancelled {
                     let list = r.items
                     if let i = list.firstIndex(where: { $0.id == it.id }) {
                         prevId = i > 0 ? list[i - 1].id : nil
@@ -412,7 +416,8 @@ final class VideoModel {
     }
 
     func reportBody(position: Double, paused: Bool) -> [String: Any] {
-        var b: [String: Any] = ["ItemId": itemId, "PositionTicks": Int64(max(0, position) * 1e7), "CanSeek": !isLive, "IsPaused": paused,
+        let safePos = position.isFinite ? max(0, position) : 0
+        var b: [String: Any] = ["ItemId": itemId, "PositionTicks": Int64(safePos * 1e7), "CanSeek": !isLive, "IsPaused": paused,
                                 "PlaySessionId": playSession, "PlayMethod": (source?.transcode ?? false) ? "Transcode" : "DirectPlay"]
         if let m = ms { b["MediaSourceId"] = m.id; if let l = m.liveStreamId { b["LiveStreamId"] = l } }
         return b

@@ -30,6 +30,11 @@ final class PlayerModel {
     @ObservationIgnored private var triedUniversal = false
     @ObservationIgnored private var lastReport = Date.distantPast
     @ObservationIgnored private var artworkTask: Task<Void, Never>?
+    @ObservationIgnored private var resumeAfterInterruption = false
+    /// bumped when the queue is replaced: a fetch started for the old queue then adds nothing to the new one
+    @ObservationIgnored private var queueGeneration = 0
+    /// the song ended at the end of the queue while more songs were on their way (the value is `auto`)
+    @ObservationIgnored private var pendingEnd: Bool?
 
     var current: Item? { queue.indices.contains(index) ? queue[index] : nil }
     var next: Item? { queue.indices.contains(index + 1) ? queue[index + 1] : nil }
@@ -58,13 +63,28 @@ final class PlayerModel {
             }
         }
         setupRemote()
+        // a phone call, Siri or another app taking the audio, and headphones coming out
+        NotificationCenter.default.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] n in
+            self?.handleInterruption(n)
+        }
+        NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] n in
+            self?.handleRouteChange(n)
+        }
     }
 
     // MARK: queue
 
+    /// the queue is being replaced: a fetch still running for the old one must not add to the new one
+    private func resetQueueState() {
+        queueGeneration += 1
+        fetchingMore = false
+        pendingEnd = nil
+    }
+
     func play(_ songs: [Item], at start: Int = 0, more: (() async -> [Item])? = nil, shuffle: Bool = false) {
         guard !songs.isEmpty else { return }
         report("Stopped")
+        resetQueueState()
         self.more = more
         shuffleOn = shuffle
         queue = songs
@@ -92,15 +112,22 @@ final class PlayerModel {
     func cycleRepeat() { repeatMode = repeatMode == "off" ? "all" : (repeatMode == "all" ? "one" : "off") }
 
     private func topUp() {
-        guard let more, !fetchingMore else { return }
+        guard let more = self.more, !fetchingMore else { return }
         fetchingMore = true
+        let gen = queueGeneration
         Task {
             let got = await more()
             await MainActor.run {
-                let have = Set(queue.map { $0.id })
+                // the queue was replaced while this fetch ran: its songs belong to the old queue
+                guard gen == self.queueGeneration else { return }
+                let have = Set(self.queue.map { $0.id })
                 let fresh = got.filter { !have.contains($0.id) }
-                if !fresh.isEmpty { queue.append(contentsOf: fresh) }
-                fetchingMore = false
+                if !fresh.isEmpty { self.queue.append(contentsOf: fresh) }
+                self.fetchingMore = false
+                if let auto = self.pendingEnd {
+                    self.pendingEnd = nil
+                    self.nextSong(auto: auto)
+                }
             }
         }
     }
@@ -133,16 +160,18 @@ final class PlayerModel {
     }
 
     func clearUpcoming() {
-        guard !queue.isEmpty else { return }
+        guard queue.indices.contains(index) else { return }
         queue = [queue[index]]
         index = 0
     }
 
     func nextSong(auto: Bool = false) {
         if auto && repeatMode == "one" { seek(to: 0); player.play(); return }
-        if index + 1 < queue.count { jump(to: index + 1) }
-        else if repeatMode == "all" && !queue.isEmpty { jump(to: 0) }
-        else if auto { player.pause(); isPlaying = false; seek(to: 0) }
+        if index + 1 < queue.count { jump(to: index + 1); return }
+        // at the end of an endless queue: wait for the songs on their way (topUp carries on from here)
+        if fetchingMore { pendingEnd = auto; return }
+        if repeatMode == "all" && !queue.isEmpty { jump(to: 0) }
+        else if auto { report("Stopped"); player.pause(); isPlaying = false; seek(to: 0) }
         else { stop() }
     }
 
@@ -164,6 +193,8 @@ final class PlayerModel {
 
     func stop() {
         report("Stopped")
+        resetQueueState()
+        more = nil
         player.pause()
         player.replaceCurrentItem(with: nil)
         queue = []
@@ -198,11 +229,13 @@ final class PlayerModel {
         let avItem = AVPlayerItem(url: url)
         if let o = endObserver { NotificationCenter.default.removeObserver(o) }
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: avItem, queue: .main) { [weak self] _ in
-            self?.nextSong(auto: true)
+            // an item that was already replaced (the person jumped to another song) says nothing more
+            guard let self, self.player.currentItem === avItem else { return }
+            self.nextSong(auto: true)
         }
         statusObserver = avItem.observe(\.status, options: [.new]) { [weak self] i, _ in
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self, self.player.currentItem === i else { return }
                 if i.status == .failed {
                     SongCache.shared.drop(it.id) // a saved copy that will not play is forgotten
                     if !self.triedUniversal { self.load(universal: true) } else { self.nextSong() }
@@ -232,11 +265,17 @@ final class PlayerModel {
     private func report(_ kind: String) {
         guard let it = current, Session.shared.isSignedIn else { return }
         let path = kind == "Playing" ? "/Sessions/Playing" : kind == "Stopped" ? "/Sessions/Playing/Stopped" : "/Sessions/Playing/Progress"
-        let body: [String: Any] = ["ItemId": it.id, "PositionTicks": Int64(max(0, now) * 10_000_000), "IsPaused": !isPlaying, "CanSeek": true]
+        // a song that has just started is playing, whatever isPlaying still says from the song before
+        let body: [String: Any] = ["ItemId": it.id, "PositionTicks": Int64(max(0, now) * 10_000_000), "IsPaused": kind == "Playing" ? false : !isPlaying, "CanSeek": true]
         Task { _ = try? await Api.request(path, method: "POST", body: body, quiet: true) }
     }
 
     // MARK: lock screen
+
+    /// Puts the song back on the lock screen (a film that closed cleared it).
+    func republishNowPlaying() {
+        if let it = current { setNowPlaying(it); updateNowPlayingPosition() }
+    }
 
     private func setNowPlaying(_ it: Item) {
         let info: [String: Any] = [
@@ -264,25 +303,67 @@ final class PlayerModel {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
+    /// A lock-screen handler: the model is changed on the main thread (the handler itself may run elsewhere).
+    private func remote(_ action: @escaping (PlayerModel, MPRemoteCommandEvent) -> Void) -> (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus {
+        return { [weak self] e in
+            DispatchQueue.main.async {
+                if let self { action(self, e) }
+            }
+            return .success
+        }
+    }
+
     private func setupRemote() {
         let c = MPRemoteCommandCenter.shared()
         c.nextTrackCommand.isEnabled = true
         c.previousTrackCommand.isEnabled = true
         c.changePlaybackPositionCommand.isEnabled = true
-        c.playCommand.addTarget { [weak self] _ in if let v = self?.video { v.play() } else { self?.play() }; return .success }
-        c.pauseCommand.addTarget { [weak self] _ in if let v = self?.video { v.pause() } else { self?.pause() }; return .success }
-        c.togglePlayPauseCommand.addTarget { [weak self] _ in
-            if let v = self?.video { if v.timeControlStatus == .paused { v.play() } else { v.pause() } } else { self?.toggle() }
-            return .success
-        }
-        c.nextTrackCommand.addTarget { [weak self] _ in self?.nextSong(); return .success }
-        c.previousTrackCommand.addTarget { [weak self] _ in self?.previous(); return .success }
-        c.changePlaybackPositionCommand.addTarget { [weak self] e in
-            if let e = e as? MPChangePlaybackPositionCommandEvent {
-                if let v = self?.video { v.seek(to: CMTime(seconds: e.positionTime, preferredTimescale: 600)) } else { self?.seek(to: e.positionTime) }
+        c.playCommand.addTarget(handler: remote { m, _ in
+            if let v = m.video { v.play() } else { m.play() }
+        })
+        c.pauseCommand.addTarget(handler: remote { m, _ in
+            if let v = m.video { v.pause() } else { m.pause() }
+        })
+        c.togglePlayPauseCommand.addTarget(handler: remote { m, _ in
+            if let v = m.video {
+                if v.timeControlStatus == .paused { v.play() } else { v.pause() }
+            } else {
+                m.toggle()
             }
-            return .success
+        })
+        c.nextTrackCommand.addTarget(handler: remote { m, _ in m.nextSong() })
+        c.previousTrackCommand.addTarget(handler: remote { m, _ in m.previous() })
+        c.changePlaybackPositionCommand.addTarget(handler: remote { m, e in
+            guard let e = e as? MPChangePlaybackPositionCommandEvent else { return }
+            if let v = m.video { v.seek(to: CMTime(seconds: e.positionTime, preferredTimescale: 600)) } else { m.seek(to: e.positionTime) }
+        })
+    }
+
+    /// A call or another app takes the audio: pause, and resume only if the system says the audio may come back.
+    private func handleInterruption(_ n: Notification) {
+        let raw = n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt ?? 0
+        guard let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+        switch type {
+        case .began:
+            resumeAfterInterruption = isPlaying || player.rate != 0
+            player.pause()
+        case .ended:
+            let options = AVAudioSession.InterruptionOptions(rawValue: n.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0)
+            try? AVAudioSession.sharedInstance().setActive(true)
+            if resumeAfterInterruption && options.contains(.shouldResume) { player.play() }
+            resumeAfterInterruption = false
+        default:
+            break
         }
+    }
+
+    /// Headphones or a speaker unplugged: the sound must not carry on out of the phone's speaker.
+    private func handleRouteChange(_ n: Notification) {
+        let raw = n.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt ?? 0
+        guard AVAudioSession.RouteChangeReason(rawValue: raw) == .oldDeviceUnavailable else { return }
+        resumeAfterInterruption = false
+        player.pause()
+        video?.pause()
     }
 }
 

@@ -114,11 +114,7 @@ struct RootView: View {
                 }
             }
             .tint(Color.pink)
-            if nav.searching {
-                // a result opens over the search; Back returns to it (the search stays where it was)
-                SearchScreen().transition(.identity).zIndex(10)
-                    .opacity(nav.path.count == nav.searchBase ? 1 : 0).allowsHitTesting(nav.path.count == nav.searchBase)
-            }
+            if nav.searching { SearchLayer().zIndex(10) }
             if p.showFull { NowPlaying().zIndex(20) }
         }
         .environment(nav)
@@ -129,12 +125,21 @@ struct RootView: View {
     }
 }
 
+/// The search screen over the tabs. A result pushed from it is hidden, not removed, until Back brings the search back.
+private struct SearchLayer: View {
+    @Environment(Nav.self) private var nav
+    var body: some View {
+        let shown = nav.path.count == nav.searchBase
+        SearchScreen().transition(.identity)
+            .opacity(shown ? 1 : 0).allowsHitTesting(shown)
+    }
+}
+
 /// One tab: its own navigation stack, the header and Back pill over it, and the player bar above the tab bar.
 private struct TabStack<Root: View>: View {
     let tab: RootTab
     @ViewBuilder var root: () -> Root
     @Environment(Nav.self) private var nav
-    @Environment(PlayerModel.self) private var player
 
     var body: some View {
         let path = Binding<[Route]>(get: { nav.paths[tab] ?? [] }, set: { nav.paths[tab] = $0 })
@@ -145,15 +150,28 @@ private struct TabStack<Root: View>: View {
                     Destination(route: r).toolbar(.hidden, for: .navigationBar)
                 }
         }
-        .overlay(alignment: .top) {
-            ZStack(alignment: .topLeading) {
-                HeaderBar()
-                if !(nav.paths[tab] ?? []).isEmpty { BackPill() }
-            }
+        .overlay(alignment: .top) { TabHeader(tab: tab) }
+        .safeAreaInset(edge: .bottom, spacing: 0) { MiniSlot() }
+    }
+}
+
+/// The header and Back pill of one tab. Only this reads the tab's stack, so a push does not redraw the tab's page.
+private struct TabHeader: View {
+    let tab: RootTab
+    @Environment(Nav.self) private var nav
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            HeaderBar()
+            if !(nav.paths[tab] ?? []).isEmpty { BackPill() }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if player.current != nil { MiniPlayer().padding(.bottom, 6) }
-        }
+    }
+}
+
+/// The player bar. Its own view, so a song change does not redraw the tab's page.
+private struct MiniSlot: View {
+    @Environment(PlayerModel.self) private var player
+    var body: some View {
+        if player.current != nil { MiniPlayer().padding(.bottom, 6) }
     }
 }
 

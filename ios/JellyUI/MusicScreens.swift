@@ -50,9 +50,11 @@ final class PlaylistCache {
     func load() {
         if Date().timeIntervalSince(at) < 60 { return }
         at = Date()
-        Task { list = await Api.playlists() }
+        Task { @MainActor in list = await Api.playlists() }
     }
     func reset() { at = .distantPast; load() }
+    /// forget the last account's playlists (on sign out)
+    func clear() { list = []; at = .distantPast }
 }
 
 struct AddToPlaylistMenu<Content: View>: View {
@@ -133,18 +135,26 @@ struct SongMenu<Content: View>: View {
     let it: Item
     var player = false
     @ViewBuilder var label: () -> Content
+    private let pls = PlaylistCache.shared
+
+    var body: some View {
+        Menu {
+            SongMenuItems(it: it, player: player)
+        } label: { label() }
+        .onAppear { pls.load() }
+    }
+}
+
+/// The items of a song's menu, as a view of their own so they read the environment where they are shown
+/// (inside the ⋮ menu, and in a row's long-press menu).
+struct SongMenuItems: View {
+    let it: Item
+    var player = false
     @Environment(PlayerModel.self) private var pm
     @Environment(Nav.self) private var nav
     private let pls = PlaylistCache.shared
 
     var body: some View {
-        Menu {
-            actions
-        } label: { label() }
-        .onAppear { pls.load() }
-    }
-
-    @ViewBuilder var actions: some View {
         Button { pm.enqueueNext(it) } label: { Label("Play next", systemImage: "text.insert") }
         Button { pm.enqueueLast(it) } label: { Label("Add to queue", systemImage: "text.badge.plus") }
         Menu {
@@ -212,7 +222,7 @@ struct SongRow: View {
                 .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(now ? Color.pink.opacity(0.35) : .clear, lineWidth: 1.2))
             }
             .buttonStyle(PressStyle())
-            .contextMenu { SongMenu(it: it) { EmptyView() }.actions }
+            .contextMenu { SongMenuItems(it: it) }
             SongMenu(it: it) {
                 Icon(name: "more", size: 20, color: Color(hex: 0xcfcfcf)).frame(width: 38, height: 38).contentShape(Rectangle())
             }
@@ -227,9 +237,20 @@ struct MusicTile: View {
     var size: CGFloat = 150
     @Environment(Nav.self) private var nav
 
+    private var subtitle: String {
+        switch it.type {
+        case "Audio": return it.artistLine
+        case "MusicAlbum": return it.albumArtist ?? "Album"
+        case "MusicArtist": return "Artist"
+        default:
+            if let n = it.childCount { return "\(n) songs" }
+            return "Playlist"
+        }
+    }
+
     var body: some View {
         let artist = it.type == "MusicArtist"
-        let sub = it.type == "Audio" ? it.artistLine : (it.type == "MusicAlbum" ? (it.albumArtist ?? "Album") : (artist ? "Artist" : (it.childCount.map { "\($0) songs" } ?? "Playlist")))
+        let sub = subtitle
         let fav = it.id == "favourites"
         Button { nav.go(it.route) } label: {
             ZStack(alignment: .bottomLeading) {
@@ -317,7 +338,7 @@ struct QuickRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(PressStyle())
-            .contextMenu { SongMenu(it: it) { EmptyView() }.actions }
+            .contextMenu { SongMenuItems(it: it) }
             SongMenu(it: it) {
                 Icon(name: "more", size: 22, color: Color(hex: 0xbdbdc2)).frame(width: 40, height: 40).contentShape(Rectangle())
             }
@@ -352,12 +373,22 @@ struct RowColumns: View {
     }
 }
 
+/// Wraps its children onto as many lines as they need. WordFlowGrid is a Layout, so it is used through an AnyLayout.
+struct FlowWrap<Content: View>: View {
+    var spacing: CGFloat = 12
+    @ViewBuilder var content: () -> Content
+    var body: some View {
+        let layout = AnyLayout(WordFlowGrid(spacing: spacing))
+        layout { content() }
+    }
+}
+
 /// Wraps its tiles onto as many lines as they need (the web's .mrow.alb).
 struct TileWrap<Content: View>: View {
     var gap: CGFloat = 12
     @ViewBuilder var content: () -> Content
     var body: some View {
-        WordFlowGrid(spacing: gap) { content() }.padding(6).padding(.horizontal, 5).padding(.top, 6)
+        FlowWrap(spacing: gap) { content() }.padding(6).padding(.horizontal, 5).padding(.top, 6)
     }
 }
 
@@ -610,6 +641,7 @@ struct ListScreen: View {
 
     private func load() async {
         loading = true
+        error = nil
         defer { loading = false }
         do {
             switch kind {

@@ -10,7 +10,7 @@ struct Flex: Codable, Hashable {
         let c = try decoder.singleValueContainer()
         if let v = try? c.decode(String.self) { s = v }
         else if let v = try? c.decode(Int.self) { s = String(v) }
-        else if let v = try? c.decode(Double.self) { s = String(Int(v)) }
+        else if let v = try? c.decode(Double.self), v.isFinite, abs(v) < 9.0e15 { s = String(Int(v)) } // Int(v) traps on huge values
         else { s = "" }
     }
     func encode(to encoder: Encoder) throws { var c = encoder.singleValueContainer(); try c.encode(s) }

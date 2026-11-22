@@ -121,7 +121,7 @@ struct MiniProgress: View {
             GeometryReader { g in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.white.opacity(0.3))
-                    Capsule().fill(Color.pink).frame(width: g.size.width * f)
+                    Capsule().fill(Color.pink).frame(width: g.size.width * CGFloat(f))
                 }
             }.frame(height: 6)
         }.frame(height: 20)
@@ -141,7 +141,7 @@ struct NowPlaying: View {
     @State private var qOpen = false
     @State private var mode = 0 // 0 undecided, 1 closing the sheet, 2 opening the queue
     @State private var edge = false
-    @State private var dragging = false
+    @State private var gestureStart: CGPoint? // where the drag under way began; nil between drags
     @State private var early = false
     @State private var late = false
     @State private var lines: [LyricLine] = []
@@ -242,8 +242,12 @@ struct NowPlaying: View {
 
     private func loadSong(_ it: Item?) async {
         coverOnly = false
-        guard let it else { lines = []; return }
-        if let c = await LyricsStore.shared.cached(it.id) { lines = c; loading = false; return }
+        guard let it else { lines = []; loading = false; return }
+        // an answer for a song that is no longer the current one must not overwrite the new song's lyrics
+        if let c = await LyricsStore.shared.cached(it.id) {
+            guard !Task.isCancelled, it.id == pm.current?.id else { return }
+            lines = c; loading = false; return
+        }
         lines = []; loading = true
         var r = await LyricsStore.shared.load(it)
         if r == nil, await LyricsStore.shared.didFail(it.id) { try? await Task.sleep(nanoseconds: 1_200_000_000); if Task.isCancelled { return }; r = await LyricsStore.shared.load(it) }
@@ -270,9 +274,10 @@ struct NowPlaying: View {
     private func zone(_ H: CGFloat, noQueue: Bool = false) -> AnyGesture<DragGesture.Value> {
         AnyGesture(DragGesture(minimumDistance: 8, coordinateSpace: .global)
             .onChanged { v in
+                // a new drag has a new start point. A cancelled drag never reaches onEnded, so this is what clears its mode.
+                if v.startLocation != gestureStart { gestureStart = v.startLocation; mode = 0; edge = v.startLocation.y > H - 44 }
                 let dy = v.translation.height
                 if abs(v.translation.width) > abs(dy) * 1.5 && mode == 0 { return }
-                if !dragging { dragging = true; mode = 0; edge = v.startLocation.y > H - 44 }
                 if qOpen { if dy > 0 { qY = dy }; return }
                 if mode == 0 {
                     if dy > 0 { mode = 1 } else if !edge && !noQueue { mode = 2 } else { return }
@@ -282,7 +287,7 @@ struct NowPlaying: View {
             .onEnded { v in
                 let dy = v.translation.height
                 let flick = abs(v.predictedEndTranslation.height - dy) > 90
-                dragging = false
+                gestureStart = nil
                 if qOpen {
                     if dy > FAR || (flick && dy > 30) { toggleQueue(false, H) } else { withAnimation(SHEET) { qY = 0 } }
                 } else if mode == 1 {
@@ -321,7 +326,8 @@ struct NowPlaying: View {
                 }
             }
             .frame(width: 304).padding(.bottom, 18 + bottom).contentShape(Rectangle()).gesture(zone(H))
-            PlayBar(duration: pm.duration, ink: ink).padding(.horizontal, 14).padding(.bottom, 138 + bottom).contentShape(Rectangle())
+            // no contentShape here: the padding below the bar is part of this view, and a shape over it swallowed every tap on the buttons under it
+            PlayBar(duration: pm.duration, ink: ink).padding(.horizontal, 14).padding(.bottom, 138 + bottom)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
     }
@@ -388,7 +394,7 @@ struct PlayBar: View {
             }
             GeometryReader { g in
                 TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !pm.isPlaying && drag == nil)) { _ in
-                    let f = drag ?? (duration > 0 ? max(0, min(1, pm.now / duration)) : 0)
+                    let f: CGFloat = CGFloat(drag ?? (duration > 0 ? max(0, min(1, pm.now / duration)) : 0))
                     ZStack(alignment: .leading) {
                         Capsule().fill(ink.color(0.3)).frame(height: 6)
                         Capsule().fill(ink.color()).frame(width: g.size.width * f, height: 6)
@@ -396,9 +402,9 @@ struct PlayBar: View {
                     }.frame(height: compact ? 20 : 40)
                 }
                 .contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 0).onChanged { v in drag = max(0, min(1, v.location.x / max(1, g.size.width))) }
+                .gesture(DragGesture(minimumDistance: 0).onChanged { v in drag = Double(max(0, min(1, v.location.x / max(1, g.size.width)))) }
                     .onEnded { v in
-                        let f = max(0, min(1, v.location.x / max(1, g.size.width)))
+                        let f = Double(max(0, min(1, v.location.x / max(1, g.size.width))))
                         pm.seek(to: f * duration)
                         drag = nil
                     })

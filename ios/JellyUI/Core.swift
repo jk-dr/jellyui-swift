@@ -241,7 +241,7 @@ enum Api {
     static func probe(_ base: String) async throws -> String {
         guard let u = URL(string: base + "/System/Info/Public") else { throw ApiError(status: 0, message: "That address isn't valid.") }
         do {
-            let (d, r) = try await URLSession.shared.data(from: u)
+            let (d, r) = try await URLSession.shared.data(for: URLRequest(url: u, timeoutInterval: 15))
             if let c = (r as? HTTPURLResponse)?.statusCode, c != 200 { throw ApiError(status: c, message: "That address answered with an error (\(c)).") }
             let p = try jellyDecoder.decode(Public.self, from: d)
             return p.serverName
@@ -258,6 +258,7 @@ enum Api {
         guard let u = URL(string: base + "/Users/AuthenticateByName") else { throw ApiError(status: 0, message: "Bad address") }
         var r = URLRequest(url: u)
         r.httpMethod = "POST"
+        r.timeoutInterval = 15
         r.setValue(Session.shared.authHeader(withToken: false), forHTTPHeaderField: "Authorization")
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         r.httpBody = try JSONSerialization.data(withJSONObject: ["Username": name, "Pw": pw])
@@ -408,10 +409,7 @@ final class ImageStore {
 
     func load(_ url: URL) async -> UIImage? {
         if let i = cached(url) { return i }
-        let t = task(for: url)
-        let out = await t.value
-        finish(url)
-        return out
+        return await task(for: url).value
     }
 
     private func task(for url: URL) -> Task<UIImage?, Never> {
@@ -419,6 +417,8 @@ final class ImageStore {
         defer { lock.unlock() }
         if let t = loading[url] { return t }
         let t = Task<UIImage?, Never> {
+            // the in-flight entry is removed when the load ends, whatever the outcome (the lock is held until it is stored)
+            defer { self.finish(url) }
             var r = URLRequest(url: url)
             r.cachePolicy = .returnCacheDataElseLoad
             r.setValue(Session.shared.authHeader(), forHTTPHeaderField: "Authorization")
@@ -464,7 +464,11 @@ struct Pic_: View {
         .task(id: url) {
             guard let url else { image = nil; return }
             if let c = ImageStore.shared.cached(url) { image = c; return }
+            // the previous item's picture must not stay up while this one loads
+            image = nil
             let i = await ImageStore.shared.load(url)
+            // a load overtaken by a newer url (the task was cancelled) must not overwrite it
+            guard !Task.isCancelled else { return }
             withAnimation(.easeOut(duration: 0.2)) { image = i }
         }
     }

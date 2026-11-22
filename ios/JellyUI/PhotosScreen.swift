@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 private func isVideo(_ it: Item) -> Bool { it.mediaType == "Video" || it.type == "Video" }
 private func isMedia(_ it: Item) -> Bool { it.type == "Photo" || it.type == "Video" || it.mediaType == "Photo" || it.mediaType == "Video" }
@@ -18,10 +19,16 @@ private func ratio(_ it: Item) -> CGFloat {
     return 1.5
 }
 
+private struct JCell: Identifiable {
+    let it: Item
+    let w: CGFloat
+    var id: String { it.id }
+}
+
 private struct JRow: Identifiable {
     var id: String
     var h: CGFloat
-    var cells: [(it: Item, w: CGFloat)]
+    var cells: [JCell]
 }
 
 private func justify(_ items: [Item], avail: CGFloat) -> [JRow] {
@@ -32,7 +39,7 @@ private func justify(_ items: [Item], avail: CGFloat) -> [JRow] {
         guard !cur.isEmpty else { return }
         let gaps = GAP * CGFloat(cur.count - 1)
         let h = full ? (avail - gaps) / sum : ROW_H
-        rows.append(JRow(id: cur[0].id, h: h, cells: cur.map { ($0, ratio($0) * h) }))
+        rows.append(JRow(id: cur[0].id, h: h, cells: cur.map { JCell(it: $0, w: ratio($0) * h) }))
         cur = []; sum = 0
     }
     for it in items {
@@ -114,7 +121,7 @@ struct PhotosScreen: View {
             } else {
                 LazyVStack(alignment: .leading, spacing: GAP) {
                     ForEach(rows) { r in
-                        HStack(spacing: GAP) { ForEach(r.cells, id: \.it.id) { c in PhotoTile(it: c.it, w: c.w, h: r.h) { open($0, items) } } }
+                        HStack(spacing: GAP) { ForEach(r.cells) { c in PhotoTile(it: c.it, w: c.w, h: r.h) { open($0, items) } } }
                     }
                 }.padding(.horizontal, 11)
             }
@@ -151,9 +158,17 @@ struct PhotoViewer: View {
     let auto: Bool
     @Environment(\.dismiss) private var dismiss
     private let settings = Settings.shared
-    @State private var index = 0
-    @State private var slide = false
+    @State private var index: Int
+    @State private var slide: Bool
     @State private var chrome = true
+
+    init(list: [Item], start: Int, auto: Bool) {
+        self.list = list
+        self.start = start
+        self.auto = auto
+        _index = State(initialValue: start)
+        _slide = State(initialValue: auto)
+    }
 
     var body: some View {
         let cur = list.indices.contains(index) ? list[index] : nil
@@ -195,7 +210,6 @@ struct PhotoViewer: View {
             }
         }
         .preferredColorScheme(.dark)
-        .onAppear { index = start; slide = auto }
         .task(id: "\(slide)|\(index)|\(settings.slideDelay)") {
             guard slide else { return }
             try? await Task.sleep(nanoseconds: UInt64(max(2, min(60, settings.slideDelay))) * 1_000_000_000)

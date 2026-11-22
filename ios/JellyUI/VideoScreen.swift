@@ -123,7 +123,7 @@ private func gateMessage(_ g: GateInfo?) -> String {
 
 func formatTime(_ sec: Double) -> String {
     guard sec.isFinite else { return "0:00" }
-    let s = max(0, Int(sec.rounded()))
+    let s = max(0, Int(min(sec, 1e9).rounded()))
     let h = s / 3600, m = (s % 3600) / 60, ss = s % 60
     return (h > 0 ? "\(h):" + String(format: "%02d", m) : String(m)) + ":" + String(format: "%02d", ss)
 }
@@ -263,6 +263,10 @@ struct Stage: View {
     @State private var lastTap = (t: Date.distantPast, side: 0)
     @State private var seekPending: Double = 0
     @State private var infoAt: Double = -10
+    @State private var progressTask: Task<Void, Never>?
+    @State private var cueReq = 0
+    @State private var flashN = 0
+    @State private var keepPaused = false
 
     final class Observers {
         var time: Any?
@@ -299,16 +303,28 @@ struct Stage: View {
                     VStack(spacing: 16) {
                         Text(playErr).font(.q(15)).foregroundStyle(Color.dimText).multilineTextAlignment(.center)
                         HStack(spacing: 8) {
-                            Btn(label: "Try again", kind: .primary) { playErr = ""; Task { await reopen(label: "Reconnecting…") } }
+                            Btn(label: "Try again", kind: .primary) {
+                                playErr = ""
+                                // a failed episode switch retries the episode the user picked, not the one still on screen
+                                Task { if let p = pb.pendingId { await goTo(p) } else { await reopen(label: "Reconnecting…") } }
+                            }
                             Btn(label: "Back", action: exit)
                         }.frame(maxWidth: 360)
                     }.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.black.opacity(0.7))
                 }
                 if let s = skipSeg {
-                    Button { player.seek(to: CMTime(seconds: s.end, preferredTimescale: 600)); skipSeg = nil; showFlash("Skipped \(segLabel(s.type))") } label: {
-                        Text("Skip \(segLabel(s.type))").font(.q(15)).foregroundStyle(.black).padding(.horizontal, 20).padding(.vertical, 10)
-                            .background(Color.white.opacity(0.92), in: RoundedRectangle(cornerRadius: 12))
-                    }.buttonStyle(.plain).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing).padding(.trailing, 20).padding(.bottom, 130 + Insets.bottom)
+                    // the full-screen spacers stay empty, so taps elsewhere reach the screen; only the button itself takes taps
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            Button { player.seek(to: CMTime(seconds: s.end, preferredTimescale: 600)); skipSeg = nil; showFlash("Skipped \(segLabel(s.type))") } label: {
+                                Text("Skip \(segLabel(s.type))").font(.q(15)).foregroundStyle(.black).padding(.horizontal, 20).padding(.vertical, 10)
+                                    .background(Color.white.opacity(0.92), in: RoundedRectangle(cornerRadius: 12))
+                            }.buttonStyle(.plain)
+                        }
+                        .padding(.trailing, 20).padding(.bottom, 130 + Insets.bottom)
+                    }
                 }
                 controls(w)
                 if let m = menu { menuSheet(m) }
@@ -342,7 +358,10 @@ struct Stage: View {
                 if s > 1 { lastGood = s }
                 if abs(s - infoAt) >= 2 { infoAt = s; nowPlayingInfo(elapsed: s) }
             }
-            if let r = player.currentItem?.loadedTimeRanges.first?.timeRangeValue { buffered = r.start.seconds + r.duration.seconds }
+            if let r = player.currentItem?.loadedTimeRanges.first?.timeRangeValue {
+                let b = r.start.seconds + r.duration.seconds
+                if b.isFinite { buffered = b }
+            }
         }
         o.items.append(player.observe(\.timeControlStatus, options: [.new]) { p, _ in
             DispatchQueue.main.async {
@@ -353,7 +372,8 @@ struct Stage: View {
             }
         })
         if let s = pb.source { Task { await swap(to: s) } }
-        Task { // progress every 10 s
+        progressTask?.cancel()
+        progressTask = Task { // progress every 10 s
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 10_000_000_000)
                 if reported && !stopped { pb.report("Progress", position: now, paused: !playing) }
@@ -367,13 +387,17 @@ struct Stage: View {
         if let e = observers.end { NotificationCenter.default.removeObserver(e) }
         PlayerModel.shared.video = nil
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        PlayerModel.shared.republishNowPlaying()
         observers.status?.invalidate()
         observers.items.forEach { $0.invalidate() }
         observers.items = []
         player.pause()
         player.replaceCurrentItem(with: nil)
         hideTask?.cancel()
+        progressTask?.cancel()
+        progressTask = nil
         UIApplication.shared.isIdleTimerDisabled = false
+        Orient.set(.portrait) // idempotent: any way out of the player leaves the app upright
     }
 
     private func swap(to src: VSource) async {
@@ -411,10 +435,12 @@ struct Stage: View {
         if seekPending > 0 { showFlash("Resumed at \(formatTime(start))") }
         nowPlayingInfo(elapsed: start)
         PlayerModel.shared.pause() // a film must not play over a song
-        player.play()
+        if keepPaused { keepPaused = false } else { player.play() }
         swapMsg = ""
+        // a new film or episode opens a play session; a quality, audio, subtitle change or reconnect (reopen) continues it
+        let fresh = !reported
         reported = true; stopped = false
-        pb.report("Playing", position: start, paused: false)
+        pb.report(fresh ? "Playing" : "Progress", position: start, paused: false)
     }
 
     private func nowPlayingInfo(elapsed: Double) {
@@ -457,7 +483,7 @@ struct Stage: View {
         reportStop()
         player.pause()
         swapMsg = "Opening…"; buffering = true; playErr = ""
-        cues = []; segs = []; skipSeg = nil; shown = []; chosenFor = ""; textSub = -1
+        cueReq += 1; cues = []; segs = []; skipSeg = nil; shown = []; chosenFor = ""; textSub = -1
         reported = false; stopped = false; errRetries = 0; position = 0; scrub = nil
         await pb.switchTo(id)
         fav = pb.favourite
@@ -519,23 +545,35 @@ struct Stage: View {
     }
 
     private func showFlash(_ t: String, side: Int = 0) {
+        flashN += 1
+        let n = flashN
         flash = (t, side)
-        Task { try? await Task.sleep(nanoseconds: 700_000_000); flash = nil }
+        // an older flash's timer must not clear a newer flash early
+        Task { try? await Task.sleep(nanoseconds: 700_000_000); if flashN == n { flash = nil } }
     }
 
     private func reopen(sub: Int? = nil, audio: Int? = nil, bitrate: Int? = nil, label: String = "Changing…") async {
         let at = now
+        // the new stream keeps this one's paused state; swap() reads and clears this
+        keepPaused = player.timeControlStatus == .paused
         swapMsg = label
         do { try await pb.open(pb.itemId, at: at, sub: sub, audio: audio, bitrate: bitrate) }
-        catch { swapMsg = "Could not change that"; try? await Task.sleep(nanoseconds: 2_500_000_000); swapMsg = "" }
+        catch { keepPaused = false; swapMsg = "Could not change that"; try? await Task.sleep(nanoseconds: 2_500_000_000); swapMsg = "" }
     }
 
     // MARK: subtitles and segments
 
     private func loadCues(_ s: MStream?) async {
+        cueReq += 1
+        let mine = cueReq
         guard let s, let ms = pb.ms else { cues = []; return }
         let path = s.deliveryUrl ?? "/Videos/\(pb.itemId)/\(ms.id)/Subtitles/\(s.index)/0/Stream.vtt"
-        guard let u = Api.keyed(path), let (d, _) = try? await URLSession.shared.data(from: u), let t = String(data: d, encoding: .utf8) else { cues = []; return }
+        guard let u = Api.keyed(path), let (d, _) = try? await URLSession.shared.data(from: u), let t = String(data: d, encoding: .utf8) else {
+            if mine == cueReq { cues = [] }
+            return
+        }
+        // a later subtitle choice (or another episode) made while this one downloaded wins
+        guard mine == cueReq else { return }
         cues = VTT.parse(t)
     }
 
@@ -552,6 +590,7 @@ struct Stage: View {
         menu = nil
         let st = pb.ms?.subs.first { $0.index == idx }
         let burning = pb.subIndex > -1
+        cueReq += 1
         if idx == -1 { textSub = -1; cues = []; if burning { await reopen(sub: -1) }; return }
         if st?.isText == false { textSub = -1; cues = []; await reopen(sub: idx) }
         else { textSub = idx; await loadCues(st); if burning { await reopen(sub: -1) } }
@@ -560,7 +599,10 @@ struct Stage: View {
     private func loadSegments() async {
         segs = []
         guard !pb.isLive, !pb.itemId.isEmpty else { return }
-        segs = await Api.segments(pb.itemId)
+        let found = await Api.segments(pb.itemId)
+        // the task is cancelled when the episode changes: an old answer must not land on the new one
+        guard !Task.isCancelled else { return }
+        segs = found
     }
 
     private func segLabel(_ t: String) -> String { t == "Outro" ? "Credits" : (["Intro", "Recap", "Preview"].contains(t) ? t : "Segment") }
@@ -609,6 +651,8 @@ struct Stage: View {
         let padL = max(Insets.window?.safeAreaInsets.left ?? 0, 16), padR = max(Insets.window?.safeAreaInsets.right ?? 0, 16)
         let q = BITRATES_VIDEO.first { $0.value == (pb.maxBitrate >= 120_000_000 ? 120_000_000 : pb.maxBitrate) }?.label ?? "Auto"
         let subNow = pb.subIndex > -1 ? pb.subIndex : textSub
+        let fallback = player.currentItem?.duration.seconds ?? 0
+        let total = pb.duration > 0 ? pb.duration : (fallback.isFinite ? fallback : 0)
         return ZStack {
             Color.black.opacity(0.4).allowsHitTesting(false)
             VStack {
@@ -627,7 +671,7 @@ struct Stage: View {
                         Text("LIVE").font(.system(size: 11, weight: .heavy)).tracking(1).foregroundStyle(.white).padding(.horizontal, 8).padding(.vertical, 2)
                             .background(Color.danger, in: RoundedRectangle(cornerRadius: 4)).frame(maxWidth: .infinity, alignment: .leading).frame(height: 32)
                     } else {
-                        VideoSeek(pos: { now }, duration: pb.duration > 0 ? pb.duration : (player.currentItem?.duration.seconds ?? 0), buffered: buffered, downloaded: pb.downloaded, active: visible, limit: limit,
+                        VideoSeek(pos: { now }, duration: total, buffered: { buffered }, downloaded: pb.downloaded, active: visible, limit: limit,
                                   onScrub: { s in scrub = s; wake(stay: true) }, onSeek: { s in scrub = nil; seekTo(s) })
                     }
                     HStack(spacing: 2) {
@@ -720,7 +764,8 @@ struct VideoSeek: View {
     /// the playback position right now (read every frame while the controls are up)
     let pos: () -> Double
     let duration: Double
-    let buffered: Double
+    /// read where it is drawn, so the parent screen does not re-render with every buffer update
+    let buffered: () -> Double
     let downloaded: Double
     let active: Bool
     var limit: (Double) -> Double
@@ -738,7 +783,7 @@ struct VideoSeek: View {
                     ZStack(alignment: .leading) {
                         Capsule().fill(Color.white.opacity(0.28)).frame(height: 5.4)
                         if downloaded > 0 && downloaded < 99.95 { Capsule().fill(Color(hex: 0x2f8cff)).frame(width: w * downloaded / 100, height: 5.4) }
-                        Capsule().fill(Color.white.opacity(0.3)).frame(width: duration > 0 ? w * min(1, buffered / duration) : 0, height: 5.4)
+                        Capsule().fill(Color.white.opacity(0.3)).frame(width: duration > 0 ? w * min(1, buffered() / duration) : 0, height: 5.4)
                         Capsule().fill(Color.pink).frame(width: w * f, height: 5.4)
                         Circle().fill(.white).frame(width: 13.2, height: 13.2).scaleEffect(drag != nil ? 1.5 : 1)
                             .shadow(color: .black.opacity(0.6), radius: 3, y: 1).offset(x: w * f - 6.6)
@@ -749,13 +794,16 @@ struct VideoSeek: View {
                 }
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0).onChanged { v in
+                    // no known length, nothing to scrub to
+                    guard duration > 0 else { return }
                     let f = max(0, min(1, v.location.x / max(1, w)))
                     let s = limit(f * duration)
-                    drag = duration > 0 ? s / duration : 0
+                    drag = s / duration
                     onScrub(s)
                 }.onEnded { v in
-                    let s = limit(max(0, min(1, v.location.x / max(1, w))) * duration)
                     drag = nil
+                    guard duration > 0 else { return }
+                    let s = limit(max(0, min(1, v.location.x / max(1, w))) * duration)
                     onSeek(s)
                 })
             }.frame(height: 32)

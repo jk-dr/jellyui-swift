@@ -17,21 +17,28 @@ final class LyricsClock {
 
     func run(starts: [Double], sstarts: [Double], player: PlayerModel) {
         task?.cancel()
+        step(starts, sstarts, player) // the current row now, before the first frame, so an opening screen can scroll to it
         task = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                let t = player.now + Lyr.ahead
-                let i = Lyr.indexAt(starts, t)
-                let s = max(i, Lyr.indexAt(sstarts, t))
-                if i != self.idx { self.idx = i }
-                if s != self.sidx { self.sidx = s }
-                // sleep until the next boundary (either list), capped so a seek or pause is noticed within 0.25 s
-                let nextA = i + 1 < starts.count ? starts[i + 1] : .infinity
-                let nextS = s + 1 < sstarts.count ? sstarts[s + 1] : .infinity
-                let wait = player.isPlaying ? min(0.25, max(0.008, min(nextA, nextS) - t)) : 0.25
+                let wait = self.step(starts, sstarts, player)
                 try? await Task.sleep(for: .seconds(wait))
             }
         }
+    }
+
+    /// Updates the sung row and the scroll target; returns how long to sleep before the next boundary.
+    @discardableResult
+    private func step(_ starts: [Double], _ sstarts: [Double], _ player: PlayerModel) -> Double {
+        let t = player.now + Lyr.ahead
+        let i = Lyr.indexAt(starts, t)
+        let s = max(i, Lyr.indexAt(sstarts, t))
+        if i != idx { idx = i }
+        if s != sidx { sidx = s }
+        // sleep until the next boundary (either list), capped so a seek or pause is noticed within 0.25 s
+        let nextA = i + 1 < starts.count ? starts[i + 1] : .infinity
+        let nextS = s + 1 < sstarts.count ? sstarts[s + 1] : .infinity
+        return player.isPlaying ? min(0.25, max(0.008, min(nextA, nextS) - t)) : 0.25
     }
 
     func stop() { task?.cancel(); task = nil }
@@ -94,7 +101,7 @@ private struct WipeRenderer: TextRenderer {
                         let pk = w.t + dur * Double(k) / Double(n)
                         let y = t < pk ? max(0, 1 - (pk - t) / rise) : max(0, 1 - (t - pk) / fall)
                         var c = ctx
-                        c.translateBy(x: 0, y: -size * 0.09 * y)
+                        c.translateBy(x: 0, y: -size * 0.09 * CGFloat(y))
                         drawWipe(g, rect: g.typographicBounds.rect, wordRect: r, p: p, soft: soft, in: &c)
                     }
                 } else {
@@ -111,8 +118,8 @@ private struct WipeRenderer: TextRenderer {
         // dim under, lit on top through a soft-edged mask (the edge travels past the end so the last letters finish lit)
         var d = ctx; d.opacity = dim; piece.draw(in: &d)
         let pos = p * (1 + soft)
-        let x0 = wordRect.minX + wordRect.width * max(0, min(1, pos - soft))
-        let x1 = wordRect.minX + wordRect.width * max(0, min(1, pos))
+        let x0 = wordRect.minX + wordRect.width * CGFloat(max(0, min(1, pos - soft)))
+        let x1 = wordRect.minX + wordRect.width * CGFloat(max(0, min(1, pos)))
         if x1 <= rect.minX { return }
         var lit = ctx
         if x0 >= rect.maxX {
@@ -142,10 +149,11 @@ private struct LyricRow: View, Equatable {
     let level: Double // brightness: 1 current, .3 next, .15 others
     let playing: Bool
     let player: PlayerModel
+    var tick = 0 // changes on a seek while paused, so the sung row redraws at the new place
     var onTap: () -> Void = {}
 
     static func == (a: LyricRow, b: LyricRow) -> Bool {
-        a.ink == b.ink && a.line.id == b.line.id && a.size == b.size && a.active == b.active && a.level == b.level && a.playing == b.playing
+        a.ink == b.ink && a.line.id == b.line.id && a.size == b.size && a.active == b.active && a.level == b.level && a.playing == b.playing && a.tick == b.tick
     }
 
     var body: some View {
@@ -225,7 +233,7 @@ private struct Dots: View {
                 Circle()
                     .fill(ink.color(0.3 + 0.7 * seg))
                     .frame(width: size * 0.42, height: size * 0.42)
-                    .scaleEffect(0.8 + 0.2 * seg)
+                    .scaleEffect(CGFloat(0.8 + 0.2 * seg))
             }
         }
         .frame(height: size * 1.2)
@@ -243,6 +251,15 @@ struct LyricsView: View {
     @Environment(\.ink) private var ink
     @State private var clock = LyricsClock()
     @State private var hold = Date.distantPast
+    @State private var seekTick = 0
+
+    // written out (not the memberwise one): the private state above would make that initializer private
+    init(lines: [LyricLine], player: PlayerModel, topInset: CGFloat = 40, bottomInset: CGFloat = 200) {
+        self.lines = lines
+        self.player = player
+        self.topInset = topInset
+        self.bottomInset = bottomInset
+    }
 
     var body: some View {
         let idx = clock.idx
@@ -262,6 +279,7 @@ struct LyricsView: View {
                                 level: !playing ? 0.07 : (!synced ? 0.9 : (isActive ? 1 : (upcoming ? 0.3 : 0.15))),
                                 playing: playing && isActive,
                                 player: player,
+                                tick: seekTick,
                                 onTap: { if let lt = l.t { player.seek(to: max(0, lt - 0.05)); hold = .distantPast; Task { try? await Task.sleep(for: .milliseconds(60)); start() } } }
                             )
                             .equatable()
@@ -288,6 +306,8 @@ struct LyricsView: View {
             }
             .onChange(of: lines.first?.id) { _, _ in start() }
             .onChange(of: playing) { _, _ in start() } // a resume or a seek wakes the clock at once
+            // a seek (a row tap or the bar) while paused: the paused sung row is redrawn, as it is not on a timeline
+            .onChange(of: player.position) { _, _ in if !playing { seekTick += 1 } }
             .onDisappear { clock.stop() }
         }
     }

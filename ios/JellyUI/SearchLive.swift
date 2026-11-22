@@ -52,6 +52,7 @@ struct SearchScreen: View {
                 .overlay(alignment: .trailing) {
                     Button { cancel() } label: { Text("Cancel").font(.q(16)).foregroundStyle(Color.pink).frame(width: 70, height: 48, alignment: .trailing) }
                         .buttonStyle(.plain).opacity(Double(open)).offset(x: (1 - open) * 28)
+                        .allowsHitTesting(open > 0.5)
                 }
                 .padding(.horizontal, 16).padding(.top, 10 + Insets.top).padding(.bottom, 4)
 
@@ -124,7 +125,8 @@ struct SearchScreen: View {
         if !res.songs.isEmpty {
             let n = expanded.contains("Songs") ? min(res.songs.count, 40) : min(res.songs.count, per)
             h3("Songs")
-            ForEach(Array(res.songs.prefix(n).enumerated()), id: \.element.id) { i, s in
+            ForEach(0..<n, id: \.self) { i in
+                let s = res.songs[i]
                 row(s, s.artistLine.isEmpty ? "Song" : s.artistLine) { remember(); pm.play(res.songs, at: i) }
             }
             if res.songs.count > n { moreRow("Show \(res.songs.count - n) more") { _ = expanded.insert("Songs") } }
@@ -201,21 +203,26 @@ struct SearchScreen: View {
         UserDefaults.standard.set(recent, forKey: "recentSearches")
     }
 
+    /// One search per change of the box. The query is read once, so a slow answer for an old query cannot be
+    /// shown for a new one: a cancelled run (the box changed again) stops before it writes anything.
     private func runSearch() async {
-        guard !term.isEmpty else { res = SearchResults(); loading = false; dym = ""; return }
+        let query = term
+        guard !query.isEmpty else { res = SearchResults(); loading = false; dym = ""; return }
         loading = true
         try? await Task.sleep(nanoseconds: 250_000_000)
         if Task.isCancelled { return }
         defer { if !Task.isCancelled { loading = false } }
         do {
-            let r = try await Api.items(["searchTerm": term, "IncludeItemTypes": "Movie,Series,MusicArtist,MusicAlbum,Audio,Playlist", "Recursive": true, "Limit": 60, "Fields": "ProviderIds,AlbumArtist,RunTimeTicks", "EnableImageTypes": "Primary,Backdrop", "ImageTypeLimit": 1])
+            let r = try await Api.items(["searchTerm": query, "IncludeItemTypes": "Movie,Series,MusicArtist,MusicAlbum,Audio,Playlist", "Recursive": true, "Limit": 60, "Fields": "ProviderIds,AlbumArtist,RunTimeTicks", "EnableImageTypes": "Primary,Backdrop", "ImageTypeLimit": 1])
             if Task.isCancelled { return }
             func by(_ t: String) -> [Item] { r.filter { $0.type == t } }
             res = SearchResults(movies: by("Movie"), shows: by("Series"), artists: by("MusicArtist"), albums: by("MusicAlbum"), songs: by("Audio"), playlists: by("Playlist"))
             error = ""; dym = ""
             if res.total == 0 {
                 struct Sug: Decodable { var suggestion: String? }
-                if let s: Sug = try? await Api.get("/JellyUI/Suggest", ["q": term], quiet: true) { dym = s.suggestion ?? "" }
+                let s: Sug? = try? await Api.get("/JellyUI/Suggest", ["q": query], quiet: true)
+                if Task.isCancelled { return }
+                dym = s?.suggestion ?? ""
             }
         } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
     }
@@ -242,7 +249,7 @@ struct ChannelCard: View {
         var pct: Double = 0
         var np = "No guide data"
         var range = ""
-        if let cp = c.currentProgram, let s = ISO8601DateFormatter.flexible(cp.startDate ?? ""), let e = ISO8601DateFormatter.flexible(cp.endDate ?? "") {
+        if let cp = c.currentProgram, let s = ISO8601DateFormatter.flexible(cp.startDate ?? ""), let e = ISO8601DateFormatter.flexible(cp.endDate ?? ""), e > s {
             pct = max(0, min(100, Date().timeIntervalSince(s) / e.timeIntervalSince(s) * 100))
             np = cp.name ?? ""
             range = "\(clock(cp.startDate)) – \(clock(cp.endDate))"
@@ -298,8 +305,15 @@ struct LiveScreen: View {
     private let LPAGE = 48
 
     private func isFav(_ c: Item) -> Bool { favs[c.id] ?? (c.userData?.isFavorite ?? false) }
-    private func words(_ c: Item) -> String {
+    /// the searchable words of each channel, made once when the list loads (not per keystroke)
+    @State private var wordsById: [String: String] = [:]
+    private static func searchWords(_ c: Item) -> String {
         ((c.title + " " + (c.number ?? "")).lowercased()).replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
+    }
+    private func words(_ c: Item) -> String { wordsById[c.id] ?? LiveScreen.searchWords(c) }
+    private func setChannels(_ list: [Item]) {
+        chans = list
+        wordsById = Dictionary(list.map { ($0.id, LiveScreen.searchWords($0)) }, uniquingKeysWith: { a, _ in a })
     }
 
     var body: some View {
@@ -331,7 +345,7 @@ struct LiveScreen: View {
                 }
                 H2(toks.isEmpty ? "All channels · \(chans.count)" : "Channels · \(list.count)").padding(.top, -2)
                 Pager(cur: cur, total: pages) { pageNo = $0 }
-                WordFlowGrid(spacing: 12) {
+                FlowWrap(spacing: 12) {
                     ForEach(page) { c in ChannelCard(c: c, fav: isFav(c), onFav: toggle, onOpen: open) }
                 }.padding(.horizontal, 16).padding(.top, 12)
                 if page.isEmpty { Text("No channels match").font(.q(16)).foregroundStyle(Color.dimText).padding(.top, 30).frame(maxWidth: .infinity) }
@@ -360,9 +374,9 @@ struct LiveScreen: View {
     }
 
     private func load() async {
-        chans = await Api.channels(withProgram: false)
+        setChannels(await Api.channels(withProgram: false))
         loaded = true
         let withProg = await Api.channels(withProgram: true)
-        if !withProg.isEmpty { chans = withProg }
+        if !withProg.isEmpty { setChannels(withProg) }
     }
 }

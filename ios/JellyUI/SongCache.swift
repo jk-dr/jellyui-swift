@@ -67,7 +67,18 @@ final class SongCache {
         dir = base.appendingPathComponent("songs", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         if let d = UserDefaults.standard.data(forKey: "songcache"), let m = try? JSONDecoder().decode([String: Entry].self, from: d) { manifest = m } else { manifest = [:] }
-        monitor.pathUpdateHandler = { [weak self] p in self?.onWifi = !p.isExpensive && !p.usesInterfaceType(.cellular) }
+        // the manifest and the folder agree: a file with no entry (the app quit before the save) is removed, an entry with no file is dropped
+        let onDisk = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        let ids = Set(onDisk.map { ($0 as NSString).deletingPathExtension })
+        for f in onDisk where !manifest.keys.contains((f as NSString).deletingPathExtension) {
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent(f))
+        }
+        manifest = manifest.filter { ids.contains($0.key) }
+        monitor.pathUpdateHandler = { [weak self] p in
+            guard let self else { return }
+            let wifi = !p.isExpensive && !p.usesInterfaceType(.cellular)
+            self.lock.lock(); self.onWifi = wifi; self.lock.unlock()
+        }
         monitor.start(queue: DispatchQueue(label: "net"))
     }
 
@@ -108,46 +119,50 @@ final class SongCache {
         try? FileManager.default.removeItem(at: dir)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         manifest = [:]
+        exts = [:]
+        UserDefaults.standard.removeObject(forKey: "songexts")
         save()
     }
 
     /// Saves this song and the next few in the queue (when the setting is on, and on Wi-Fi if it says so).
     func precache(_ queue: [Item], from i: Int) {
         let s = Settings.shared
-        guard s.songCache, !(s.songCacheWifi && !onWifi) else { return }
+        lock.lock(); let wifi = onWifi; lock.unlock()
+        guard s.songCache, !(s.songCacheWifi && !wifi) else { return }
         let upto = min(queue.count, i + 1 + max(0, s.songAhead))
         for k in i..<upto where queue.indices.contains(k) { download(queue[k].id) }
     }
 
     private func download(_ id: String) {
+        guard let url = Api.keyed("/Audio/\(id)/stream", ["static": true, "deviceId": Session.shared.deviceId]) else { return }
+        // read on the caller's thread (the main thread), not on the download's
+        let limit = Settings.shared.songCacheMb * 1_048_576
         lock.lock()
         if manifest[id] != nil || busy.contains(id) { lock.unlock(); return }
         busy.insert(id)
         lock.unlock()
-        guard let url = Api.keyed("/Audio/\(id)/stream", ["static": true, "deviceId": Session.shared.deviceId]) else { return }
         URLSession.shared.downloadTask(with: url) { [weak self] tmp, resp, _ in
             guard let self else { return }
             defer { self.lock.lock(); self.busy.remove(id); self.lock.unlock() }
-            guard let tmp, (resp as? HTTPURLResponse)?.statusCode == 200 else { return }
+            guard let tmp, let http = resp as? HTTPURLResponse, http.statusCode == 200 else { return }
             self.lock.lock()
-            self.exts[id] = SongCache.ext(for: (resp as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type"), url: nil)
+            self.exts[id] = SongCache.ext(for: http.value(forHTTPHeaderField: "Content-Type"), url: nil)
             UserDefaults.standard.set(self.exts, forKey: "songexts")
+            let dest = self.file(id) // read under the lock: exts is changed by the other downloads
             self.lock.unlock()
-            let dest = self.file(id)
             try? FileManager.default.removeItem(at: dest)
             do { try FileManager.default.moveItem(at: tmp, to: dest) } catch { return }
             let size = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? Int) ?? 0
             self.lock.lock()
             self.manifest[id] = Entry(size: size, at: Date().timeIntervalSince1970)
-            self.trim()
+            self.trim(limit: limit)
             self.save()
             self.lock.unlock()
         }.resume()
     }
 
     /// the oldest-used songs go first when the size limit is reached (the caller holds the lock)
-    private func trim() {
-        let limit = Settings.shared.songCacheMb * 1_048_576
+    private func trim(limit: Int) {
         var total = manifest.values.reduce(0) { $0 + $1.size }
         for (id, e) in manifest.sorted(by: { $0.value.at < $1.value.at }) where total > limit {
             try? FileManager.default.removeItem(at: file(id))
