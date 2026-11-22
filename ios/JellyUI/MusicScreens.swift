@@ -747,7 +747,7 @@ struct ListScreen: View {
                         }.padding(.top, 12)
                     }
                 }
-                .padding(.horizontal, 16).padding(.top, 84 + 32 + 14)
+                .padding(.horizontal, 16).padding(.top, 82) // the picture sits 29 under the search bar, as on the web
             }
             if kind == .artist && !albums.isEmpty {
                 H2("Albums").padding(.top, -6)
