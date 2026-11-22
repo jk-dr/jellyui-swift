@@ -270,12 +270,14 @@ struct NowPlaying: View {
                     .contentShape(Circle().inset(by: -12))
             }
             .buttonStyle(PressStyle())
+            // (labelled on the button itself: on the full-screen frame below it covered the whole screen for VoiceOver)
+            .accessibilityLabel("Close the queue")
+            .accessibilityHidden(!fullQ)
             .offset(x: fullQ ? 0 : 140)
             .animation(fullQ ? .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.3) : .easeOut(duration: 0.2), value: fullQ)
             .padding(.trailing, 14).padding(.bottom, 12 + bottom * 0.6)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
             .allowsHitTesting(fullQ)
-            .accessibilityLabel("Close the queue")
             .zIndex(5)
 
             controls(it, noLyrics: noLyrics, bottom: bottom, H: H)
