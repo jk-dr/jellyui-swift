@@ -80,6 +80,62 @@ private func isJumpy(_ w: LyricWord) -> Bool {
 
 // MARK: - Renderer
 
+/// Where the middle of a word's soft edge is (in px from its left) at a time after the word's start: straight across a plain word;
+/// through each syllable's place at its own start for a word sung in syllables, held through any gap between them (the web's pieceMap).
+/// Before the word it comes in at the word's first speed, after it it leaves at the last.
+private struct Sweep {
+    let T: [Double], P: [Double]
+    let W: Double, dur: Double
+    let v0: Double, v1: Double
+
+    init(_ w: LyricWord, run: Text.Layout.Run, rect r: CGRect, dur: Double) {
+        let W = max(1, Double(r.width))
+        var T: [Double] = [0], P: [Double] = [0]
+        if let pt = w.pt, pt.count > 1 {
+            let chars = max(1, w.w.count), n = run.count
+            func x(_ c: Int) -> Double {
+                let k = n == chars ? c : Int((Double(c) / Double(chars) * Double(n)).rounded())
+                if k <= 0 { return 0 }
+                if k >= n { return W }
+                return Double(run[run.startIndex + k].typographicBounds.rect.minX - r.minX)
+            }
+            func add(_ tm: Double, _ v: Double) { T.append(max(T.last!, min(dur, tm))); P.append(max(P.last!, v)) }
+            for i in 1..<pt.count {
+                let v = x(pt[i].c)
+                add(pt[i - 1].e - w.t, v)
+                if pt[i].t - w.t > T.last! { add(pt[i].t - w.t, v) }
+            }
+            add(dur, W)
+        } else {
+            T = [0, dur]; P = [0, W]
+        }
+        var a = W / dur, b = W / dur
+        if let i = (1..<T.count).first(where: { P[$0] > P[$0 - 1] }) { a = (P[i] - P[i - 1]) / max(0.001, T[i] - T[i - 1]) }
+        if let i = (1..<T.count).reversed().first(where: { P[$0] > P[$0 - 1] }) { b = (P[i] - P[i - 1]) / max(0.001, T[i] - T[i - 1]) }
+        self.T = T; self.P = P; self.W = W; self.dur = dur; v0 = a; v1 = b
+    }
+
+    private static func map(_ A: [Double], _ B: [Double], _ x: Double) -> Double {
+        for i in 1..<A.count where x <= A[i] {
+            return A[i] > A[i - 1] ? B[i - 1] + (B[i] - B[i - 1]) * (x - A[i - 1]) / (A[i] - A[i - 1]) : B[i]
+        }
+        return B[B.count - 1]
+    }
+
+    /// the edge's middle at rel seconds after the word's start (-inf / +inf: not in or past the word yet)
+    func mid(_ rel: Double, edge: Double) -> Double {
+        let lead = min(0.35, (edge / 2) / max(1, v0)), trail = min(0.35, (edge / 2) / max(1, v1))
+        if rel < -lead { return -.infinity }
+        if rel > dur + trail { return .infinity }
+        if rel < 0 { return v0 * rel }
+        if rel > dur { return W + v1 * (rel - dur) }
+        return Sweep.map(T, P, rel)
+    }
+
+    /// when the edge's middle reaches x (for the letter jump)
+    func time(at x: Double) -> Double { max(0, min(dur, Sweep.map(P, T, x))) }
+}
+
 /// Draws a row as the web does: the unsung words at 30 %, a fill whose soft edge sweeps across each word while it is sung
 /// (coming in up to 0.35 s before the word and leaving up to 0.35 s after it), the sung word lifted 0.05 em, and long words'
 /// letters rising one after another as the edge passes them.
@@ -105,11 +161,10 @@ private struct WipeRenderer: TextRenderer {
                 guard let tag = run[WordTag.self], let w = word(tag.i) else { ctx.draw(run); continue }
                 let r = run.typographicBounds.rect
                 let dur = max(0.05, wordEnd(w) - w.t)
-                let W = max(1, Double(r.width))
-                // the middle of the soft edge, in px from the word's left: crosses the word while it is sung
-                let lead = min(0.35, (edge / 2) / (W / dur)), trail = lead
+                // the middle of the soft edge, in px from the word's left: crosses the word while it is sung (through its syllables' times)
+                let sweep = Sweep(w, run: run, rect: r, dur: dur)
                 let rel = t - w.t
-                let mid: Double = rel < -lead ? -.infinity : (rel > dur + trail ? .infinity : W * rel / dur)
+                let mid = sweep.mid(rel, edge: edge)
                 if isJumpy(w) && rel > -0.45 && rel < dur + 0.45 {
                     let n = max(1, run.count)
                     let R = min(0.45, max(0.11, 0.06 * Double(n - 1), 1.2 * dur / Double(n)))
@@ -119,7 +174,7 @@ private struct WipeRenderer: TextRenderer {
                     lifts.reserveCapacity(n)
                     for g in run {
                         let gr = g.typographicBounds.rect
-                        let pk = max(0, min(dur, dur * Double(gr.midX - r.minX) / W))
+                        let pk = sweep.time(at: Double(gr.midX - r.minX))
                         let F = max(0.08, min(R * 0.75, dur - pk)), t0 = max(-0.45, pk - R)
                         let y: Double = rel < t0 || rel > pk + F ? 0 : (rel <= pk ? ease((rel - t0) / max(0.001, pk - t0)) : ease(1 - (rel - pk) / F))
                         lifts.append(-CGFloat(up * y))

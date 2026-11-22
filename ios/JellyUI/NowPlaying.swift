@@ -172,6 +172,7 @@ struct NowPlaying: View {
         // lyrics (or the knowledge that there are none) loaded ahead are there from the first frame: no spinner swapped for the cover after the opening
         if let c = PlayerModel.shared.current, let m = LyricsMemo.map[c.id] {
             _lines = State(initialValue: m); _loading = State(initialValue: false); _lyricsFor = State(initialValue: c.id)
+            _early = State(initialValue: true) // the column is there from the first frame, so it slides up with the sheet (and down with it on closing)
         }
     }
 

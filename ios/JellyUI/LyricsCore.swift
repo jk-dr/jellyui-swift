@@ -6,6 +6,14 @@ struct LyricWord: Decodable, Hashable {
     var t: Double
     var e: Double?
     var w: String
+    /// a word sung in syllables: where each piece starts in the text (in characters) and when it is sung (the web's data-pt)
+    var pt: [LyricPiece]? = nil
+}
+
+struct LyricPiece: Decodable, Hashable {
+    var c: Int
+    var t: Double
+    var e: Double
 }
 
 struct LyricLine: Identifiable, Hashable {
@@ -54,9 +62,9 @@ enum Lyr {
 
     static func fromTtml(_ lines: [TtmlLine]) -> [LyricLine] {
         lines.map { l in
-            let words = (l.words?.isEmpty ?? true) ? nil : l.words
+            let words = (l.words?.isEmpty ?? true) ? nil : l.words.map(Lyr.joinSyllables)
             let back: [LyricWord]? = words != nil && !(l.back?.isEmpty ?? true)
-                ? Lyr.capitalFirst(l.back!.map { LyricWord(t: $0.t, e: $0.e, w: $0.w.replacingOccurrences(of: "(", with: "").replacingOccurrences(of: ")", with: "")) })
+                ? Lyr.joinSyllables(Lyr.capitalFirst(l.back!.map { LyricWord(t: $0.t, e: $0.e, w: $0.w.replacingOccurrences(of: "(", with: "").replacingOccurrences(of: ")", with: "")) }))
                 : nil
             return LyricLine(text: l.text ?? "", t: l.t, e: l.e, words: words, back: back)
         }
@@ -232,6 +240,38 @@ extension Lyr {
         var out = ws
         w.w.replaceSubrange(i...i, with: String(w.w[i]).uppercased())
         out[k] = w
+        return out
+    }
+}
+
+extension Lyr {
+    /// The web's wordGroups: the pieces of one word (sung in syllables, no space between them) become one word, from the first
+    /// piece's start to the last one's end, with the pieces' places and times kept. Its fill is then one sweep and it rises once,
+    /// instead of starting over (and hopping) at every syllable. A piece ending in a space or a dash ends a word.
+    static func joinSyllables(_ ws: [LyricWord]) -> [LyricWord] {
+        let n = ws.count
+        guard n > 1, ws.dropLast().contains(where: { $0.w.last?.isWhitespace == true }) else { return ws } // (a line with no spaces, Chinese say: left as it is)
+        func ends(_ k: Int) -> Bool {
+            guard k < n - 1, let c = ws[k].w.last else { return true }
+            return c.isWhitespace || "-\u{2010}\u{2011}\u{2012}\u{2013}\u{2014}".contains(c)
+        }
+        var out: [LyricWord] = []
+        var i = 0
+        while i < n {
+            var j = i
+            while !ends(j) { j += 1 }
+            if j > i && j - i < 8 {
+                var text = "", pt: [LyricPiece] = []
+                for k in i...j {
+                    pt.append(LyricPiece(c: text.count, t: ws[k].t, e: ws[k].e ?? (ws[k].t + 0.25)))
+                    text += ws[k].w
+                }
+                out.append(LyricWord(t: ws[i].t, e: ws[j].e ?? pt.last!.e, w: text, pt: pt))
+            } else {
+                out.append(contentsOf: ws[i...j])
+            }
+            i = j + 1
+        }
         return out
     }
 }
