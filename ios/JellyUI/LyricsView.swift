@@ -265,6 +265,9 @@ struct LyricsView: View {
                                 onTap: { if let lt = l.t { player.seek(to: max(0, lt - 0.05)); hold = .distantPast; Task { try? await Task.sleep(for: .milliseconds(60)); start() } } }
                             )
                             .equatable()
+                            .accessibilityElement(children: .combine)
+                            .accessibilityAddTraits(.isButton)
+                            .accessibilityIdentifier("lyric-\(i)")
                             .id(i)
                         }
                     }

@@ -309,7 +309,7 @@ struct NowPlaying: View {
                     // the lyrics button (new in the Swift app): shows or hides the lyrics
                     cell { Button { if !noLyrics { withAnimation(.easeInOut(duration: 0.3)) { coverOnly.toggle() } } } label: {
                         Image(systemName: "music.note").font(.system(size: 21, weight: .semibold)).foregroundStyle(ink.color()).frame(width: 46, height: 46)
-                    }.buttonStyle(.plain).opacity(noLyrics ? 0.3 : 1) }
+                    }.buttonStyle(.plain).opacity(noLyrics ? 0.3 : 1).accessibilityLabel("Lyrics") }
                     fs("queueAdd", "Open queue") { toggleQueue(true, H) }
                     cell { Button { if let it { Favs.toggle(it) } } label: {
                         let on = it.map { Favs.isFav($0) } ?? false

@@ -87,6 +87,24 @@ jobs:
           done
           ls -la shots
 
+      - name: UI tests (real taps on the full-screen player and tabs)
+        if: always()
+        continue-on-error: true
+        env:
+          TEST_RUNNER_JUI_SERVER: ${{ secrets.JF_URL }}
+          TEST_RUNNER_JUI_USER: ${{ secrets.JF_USER }}
+          TEST_RUNNER_JUI_PASS: ${{ secrets.JF_PASS }}
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild test -project JellyUI.xcodeproj -scheme JellyUI -configuration Debug \
+            -destination "id=$UDID" -derivedDataPath build -resultBundlePath ../uitest.xcresult \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee ../logs/uitest.log \
+            | grep -E "error:|Test Case|XCTAssert|failed|passed|TEST (SUCCEEDED|FAILED)" || true
+          mkdir -p ../uitest
+          xcrun xcresulttool export attachments --path ../uitest.xcresult --output-path ../uitest || true
+          ls ../uitest | head -40
+
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
@@ -95,5 +113,6 @@ jobs:
           path: |
             shots/
             logs/
+            uitest/
             ios/build.log
           retention-days: 7
