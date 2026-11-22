@@ -85,9 +85,8 @@ struct MiniPlayer: View {
                         mini("skipNext") { pm.nextSong() }
                     }
                 }
-                PlayBar(duration: pm.duration, ink: Ink(r: 248, g: 204, b: 204, a: 1), compact: true)
             }
-            .padding(.leading, 13).padding(.trailing, 10).padding(.top, 10).padding(.bottom, 6)
+            .padding(.leading, 13).padding(.trailing, 10).padding(.vertical, 10)
             // Liquid Glass, like the tab bar under it (the web's corner: 20)
             .glassEffect(.regular.tint(tint.opacity(0.6)), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .task(id: it.id) {

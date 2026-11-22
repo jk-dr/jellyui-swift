@@ -9,7 +9,7 @@ enum Insets {
     }
     static var top: CGFloat { window?.safeAreaInsets.top ?? 62 }
     static var bottom: CGFloat { window?.safeAreaInsets.bottom ?? 34 }
-    static let mini: CGFloat = 112 // the floating player bar and its gap
+    static let mini: CGFloat = 88 // the floating player bar (one row, no progress) and its gap
     /// the native tab bar's height above the home indicator (iOS 26 floating glass bar)
     static let bar: CGFloat = 56
 }
