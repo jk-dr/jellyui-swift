@@ -272,7 +272,7 @@ private struct LyricRow: View, Equatable {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.trailing, 38) // the web's (width - 16) / 1.08: the sung line grows from its left edge and still fits
+        .padding(.trailing, 28) // with the column's 18: the web's (width - 16) / 1.08, so the sung line grows from its left edge and still fits
         .padding(.vertical, 25)
         // the line that becomes current takes its full colour at once (a fade made the words hard to follow); the others ease
         .opacity(line.brk ? (active ? (dimmed ? 0.07 : 1) : 0) : (dimmed ? 0.07 : level))
@@ -415,11 +415,10 @@ struct LyricsView: View {
                     }
                     Color.clear.frame(height: bottomInset)
                 }
-                .padding(.leading, 18).padding(.trailing, 8)
-                // the column is exactly as wide as the screen's lyric area: a row redrawn word by word can never widen it and slide the lines sideways
-                .containerRelativeFrame(.horizontal, alignment: .leading)
+                // the same margin both sides: a line scrolled to is centred, and uneven margins put its centre off the column's,
+                // which slid every line sideways a little at each line change
+                .padding(.horizontal, 18)
             }
-            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
             .simultaneousGesture(DragGesture(minimumDistance: 8).onChanged { _ in hold = Date().addingTimeInterval(3) })
             .onChange(of: clock.sidx) { old, new in
                 guard synced, Date() > hold else { return }
