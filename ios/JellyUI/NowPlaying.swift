@@ -97,7 +97,9 @@ struct MiniPlayer: View {
                 var r: Float = 0, g: Float = 0, b: Float = 0
                 for k in stride(from: 0, to: c.count, by: 3) { r += c[k]; g += c[k + 1]; b += c[k + 2] }
                 let n = Float(max(1, c.count / 3)), dim: Float = 0.55
-                withAnimation(.easeInOut(duration: 0.6)) { tint = Color(red: Double(r / n * dim), green: Double(g / n * dim), blue: Double(b / n * dim)) }
+                let c2 = Color(red: Double(r / n * dim), green: Double(g / n * dim), blue: Double(b / n * dim))
+                // a skip changes the bar's colour at once; a song that ended fades into the next one's
+                if pm.smoothChange { withAnimation(.easeInOut(duration: 0.6)) { tint = c2 } } else { tint = c2 }
             }
             .padding(.horizontal, 12)
             .contextMenu {
@@ -630,7 +632,12 @@ private struct QueueRow: View {
             .gesture(RowSwipe(changed: { dx = max(0, $0) }, ended: { x, v in
                 if x > w * 0.35 || (x > 20 && v > 900) {
                     withAnimation(.easeOut(duration: 0.22)) { dx = w; gone = true }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { pm.remove(at: i); dx = 0; gone = false }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+                        // the queue may have moved in those 0.22 s (a song ended, more songs came): the swiped song is found by its id
+                        let k = pm.queue.indices.contains(i) && pm.queue[i].id == song.id ? i : pm.queue.firstIndex { $0.id == song.id }
+                        if let k { pm.remove(at: k) }
+                        dx = 0; gone = false
+                    }
                 } else {
                     withAnimation(.easeOut(duration: 0.2)) { dx = 0 }
                 }

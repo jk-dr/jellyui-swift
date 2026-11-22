@@ -8,7 +8,7 @@ import SwiftUI
 final class PlayerModel {
     static let shared = PlayerModel()
 
-    var queue: [Item] = [] { didSet { needPrep(); saveSoon() } }
+    var queue: [Item] = [] { didSet { needPrep(); queueRev &+= 1; saveSoon() } }
     var index = 0
     var isPlaying = false
     var position: Double = 0 // updated about twice a second, for bars and labels
@@ -25,6 +25,7 @@ final class PlayerModel {
     @ObservationIgnored private var seekTarget: Double?
     @ObservationIgnored private var seekToken = 0
     @ObservationIgnored private var savePending = false
+    @ObservationIgnored private var pendingStart: Double?
     @ObservationIgnored var more: (() async -> [Item])?
     @ObservationIgnored private var fetchingMore = false
     /// set while a film is playing: the lock screen's play, pause and seek then go to it
@@ -105,6 +106,7 @@ final class PlayerModel {
         guard !songs.isEmpty else { return }
         report("Stopped")
         resetQueueState()
+        smoothChange = false
         self.more = more
         shuffleOn = shuffle
         queue = songs
@@ -300,6 +302,14 @@ final class PlayerModel {
                 if i.status != .unknown { self.loading = false }
                 if i.status == .readyToPlay {
                     self.failedInARow = 0
+                    if let s = self.pendingStart {
+                        self.pendingStart = nil
+                        self.seekToken += 1
+                        let tok = self.seekToken
+                        self.player.seek(to: CMTime(seconds: s, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+                            DispatchQueue.main.async { guard let self else { return }; if tok == self.seekToken { self.seekTarget = nil }; self.seeks += 1 }
+                        }
+                    }
                     let d = i.duration.seconds
                     if d.isFinite && d > 0 { self.duration = d }
                 }
@@ -325,7 +335,8 @@ final class PlayerModel {
         player.removeAllItems()
         player.insert(avItem, after: nil)
         prepareNext()
-        if start > 0 { position = start; player.seek(to: CMTime(seconds: start, preferredTimescale: 600)) }
+        pendingStart = start > 0 ? start : nil
+        if start > 0 { position = start; seekTarget = start }
         wantsPlay = autoplay
         if autoplay { player.play(); report("Playing") } else { player.pause(); isPlaying = false }
         lastReport = Date()
@@ -362,26 +373,36 @@ final class PlayerModel {
 
     // MARK: kept across launches
 
-    private struct Saved: Codable { var queue: [Item]; var index: Int; var position: Double }
+    private struct Saved: Codable { var queue: [Item]; var from: Int }
     private static var saveURL: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("player-queue.json")
     }
+    @ObservationIgnored private var queueRev = 0
+    @ObservationIgnored private var savedRev = -1
+    @ObservationIgnored private var savedFrom = -1
 
-    /// The queue, the song and the place in it are written (once a second at most) so the player bar is back after the app restarts.
+    /// The queue, the song and the place in it are kept (once a second at most) so the player bar is back after the app restarts.
     func saveSoon() {
         if savePending { return }
         savePending = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.savePending = false; self?.save() }
     }
 
+    /// The song and the place in it go to the settings (cheap, every few seconds); the queue's file is written only when the queue
+    /// or the stretch of it that is kept changed (it was the whole queue every 5 s).
     func save() {
         let url = Self.saveURL
+        let ud = UserDefaults.standard
         guard !queue.isEmpty, queue.indices.contains(index) else {
-            DispatchQueue.global(qos: .utility).async { try? FileManager.default.removeItem(at: url) }
+            if savedRev != -2 { savedRev = -2; savedFrom = -1; DispatchQueue.global(qos: .utility).async { try? FileManager.default.removeItem(at: url) } }
             return
         }
-        let from = max(0, index - 100), to = min(queue.count, from + 500)
-        let s = Saved(queue: Array(queue[from..<to]), index: index - from, position: now.isFinite ? now : 0)
+        let from = max(0, index - 100)
+        ud.set(index - from, forKey: "pq.index")
+        ud.set(now.isFinite ? max(0, now) : 0, forKey: "pq.pos")
+        guard queueRev != savedRev || from != savedFrom else { return }
+        savedRev = queueRev; savedFrom = from
+        let s = Saved(queue: Array(queue[from..<min(queue.count, from + 500)]), from: from)
         DispatchQueue.global(qos: .utility).async {
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             if let d = try? JSONEncoder().encode(s) { try? d.write(to: url, options: .atomic) }
@@ -390,12 +411,14 @@ final class PlayerModel {
 
     /// At launch: the last queue comes back, paused at the place it was left (nothing plays until the person presses play).
     func restore() {
+        let ud = UserDefaults.standard
+        let i = ud.integer(forKey: "pq.index"), pos = ud.double(forKey: "pq.pos")
         guard queue.isEmpty, let d = try? Data(contentsOf: Self.saveURL),
-              let s = try? JSONDecoder().decode(Saved.self, from: d), s.queue.indices.contains(s.index) else { return }
+              let s = try? JSONDecoder().decode(Saved.self, from: d), s.queue.indices.contains(i) else { return }
         smoothChange = false
         queue = s.queue
-        index = s.index
-        load(autoplay: false, at: s.position)
+        index = i
+        load(autoplay: false, at: pos)
     }
 
     private func needPrep() {

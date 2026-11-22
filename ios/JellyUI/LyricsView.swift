@@ -244,12 +244,13 @@ private struct LyricRow: View, Equatable {
     let level: Double // brightness: 1 current, .3 next, .15 others
     let playing: Bool
     let player: PlayerModel
+    var dimmed = false // paused: every row at 7 %, faded in and out
     var soft = false // out of focus (the web's blur of the lines not being sung)
     var tick = 0 // changes on a seek while paused, so the sung row redraws at the new place
     var onTap: () -> Void = {}
 
     static func == (a: LyricRow, b: LyricRow) -> Bool {
-        a.ink == b.ink && a.line.id == b.line.id && a.size == b.size && a.active == b.active && a.level == b.level && a.playing == b.playing && a.tick == b.tick && a.soft == b.soft
+        a.ink == b.ink && a.line.id == b.line.id && a.size == b.size && a.active == b.active && a.level == b.level && a.playing == b.playing && a.tick == b.tick && a.soft == b.soft && a.dimmed == b.dimmed
     }
 
     var body: some View {
@@ -274,9 +275,10 @@ private struct LyricRow: View, Equatable {
         .padding(.trailing, 38) // the web's (width - 16) / 1.08: the sung line grows from its left edge and still fits
         .padding(.vertical, 25)
         // the line that becomes current takes its full colour at once (a fade made the words hard to follow); the others ease
-        .opacity(line.brk ? (active ? (level < 0.1 ? 0.07 : 1) : 0) : level)
+        .opacity(line.brk ? (active ? (dimmed ? 0.07 : 1) : 0) : (dimmed ? 0.07 : level))
         // smooth, never sudden: the line coming in brightens quickly (so it can be followed), the others ease over 0.7 s
         .animation(active ? nil : .easeInOut(duration: 0.7), value: level)
+        .animation(.easeInOut(duration: 0.4), value: dimmed)
         // out of focus: sharp at once when it comes into focus; going out, it first finishes shrinking (0.8 s), then blurs over 0.7 s
         .blur(radius: soft ? size * 0.1 : 0)
         .animation(soft ? .easeInOut(duration: 0.7).delay(0.84) : .easeOut(duration: 0.25), value: soft)
@@ -396,9 +398,10 @@ struct LyricsView: View {
                             LyricRow(
                                 ink: ink, line: l, size: 30,
                                 active: isActive || filling || !synced,
-                                level: !playing ? 0.07 : (!synced ? 0.9 : (isActive || filling || (i < idx && l.words != nil) ? 1 : (upcoming ? 0.3 : 0.15))),
+                                level: !synced ? 0.9 : (isActive || filling || (i < idx && l.words != nil) ? 1 : (upcoming ? 0.3 : 0.15)),
                                 playing: playing && (isActive || filling),
                                 player: player,
+                                dimmed: !playing,
                                 soft: synced && !l.brk && !isActive && !filling && !near,
                                 tick: seekTick,
                                 onTap: { if let lt = l.t { player.seek(to: max(0, lt - 0.05)); hold = .distantPast; Task { try? await Task.sleep(for: .milliseconds(60)); start() } } }
