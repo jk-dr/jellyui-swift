@@ -341,7 +341,7 @@ struct NowPlaying: View {
             Button(action: action) {
                 Icon(name: name, size: 22, color: main ? Color(hex: 0x0c0c0e) : ink.color()).frame(width: size, height: size)
                     .background(main ? ink.color() : .clear, in: Circle())
-            }.buttonStyle(PressStyle()).accessibilityLabel(label)
+            }.buttonStyle(PressStyle()).accessibilityLabel(label).accessibilityIdentifier("fs-" + label)
         }
     }
 }
