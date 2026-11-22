@@ -413,7 +413,10 @@ struct LyricsView: View {
                     Color.clear.frame(height: bottomInset)
                 }
                 .padding(.leading, 18).padding(.trailing, 8)
+                // the column is exactly as wide as the screen's lyric area: a row redrawn word by word can never widen it and slide the lines sideways
+                .containerRelativeFrame(.horizontal, alignment: .leading)
             }
+            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
             .simultaneousGesture(DragGesture(minimumDistance: 8).onChanged { _ in hold = Date().addingTimeInterval(3) })
             .onChange(of: clock.sidx) { old, new in
                 guard synced, Date() > hold else { return }

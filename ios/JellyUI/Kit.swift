@@ -582,8 +582,13 @@ struct HRowSkeleton: View {
     var gap: CGFloat = 12
     var radius: CGFloat = 12 // the same corners as the cards it stands in for
     var body: some View {
-        HStack(spacing: gap) { ForEach(0..<5, id: \.self) { _ in Skeleton(width: width, height: height, radius: radius) } }
-            .padding(.leading, pad).frame(height: height, alignment: .leading).padding(.top, 6).clipped()
+        // the row of placeholders lies over a screen-wide frame: five tiles side by side are wider than the screen and must not widen the page
+        Color.clear.frame(maxWidth: .infinity).frame(height: height)
+            .overlay(alignment: .leading) {
+                HStack(spacing: gap) { ForEach(0..<5, id: \.self) { _ in Skeleton(width: width, height: height, radius: radius) } }
+                    .fixedSize().padding(.leading, pad)
+            }
+            .clipped().padding(.top, 6)
     }
 }
 
