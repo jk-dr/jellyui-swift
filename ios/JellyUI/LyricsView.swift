@@ -256,7 +256,7 @@ private struct LyricRow: View, Equatable {
         VStack(alignment: .leading, spacing: 0) {
             if line.brk {
                 if active {
-                    TimelineView(.animation(paused: !playing)) { _ in
+                    TimelineView(.animation(minimumInterval: Power.shared.low ? 1.0 / 60.0 : nil, paused: !playing)) { _ in
                         Dots(ink: ink, line: line, t: player.now + Lyr.ahead, size: size)
                     }
                 } else {
@@ -271,7 +271,7 @@ private struct LyricRow: View, Equatable {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.trailing, 20) // the sung line grows from its left edge: room for it
+        .padding(.trailing, 38) // the web's (width - 16) / 1.08: the sung line grows from its left edge and still fits
         .padding(.vertical, 25)
         // the line that becomes current takes its full colour at once (a fade made the words hard to follow); the others ease
         .opacity(line.brk ? (active ? (level < 0.1 ? 0.07 : 1) : 0) : level)
@@ -291,7 +291,7 @@ private struct LyricRow: View, Equatable {
         let back = line.back ?? []
         // same Text whether sung or not: only the renderer's time changes, never the layout
         if active {
-            TimelineView(.animation(paused: !playing)) { _ in
+            TimelineView(.animation(minimumInterval: Power.shared.low ? 1.0 / 60.0 : nil, paused: !playing)) { _ in
                 face(words, back, t: player.now + Lyr.ahead)
             }
         } else {
@@ -412,7 +412,7 @@ struct LyricsView: View {
                     }
                     Color.clear.frame(height: bottomInset)
                 }
-                .padding(.horizontal, 18)
+                .padding(.leading, 18).padding(.trailing, 8)
             }
             .simultaneousGesture(DragGesture(minimumDistance: 8).onChanged { _ in hold = Date().addingTimeInterval(3) })
             .onChange(of: clock.sidx) { old, new in
@@ -423,10 +423,10 @@ struct LyricsView: View {
                     return
                 }
                 guard new >= 0 else { return }
-                // the first line change after a seek forward: there quickly, not with the slow glide of one line to the next
-                if Date().timeIntervalSince(seekedAt) < 1.5 {
-                    seekedAt = .distantPast
-                    withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(new, anchor: UnitPoint(x: 0.5, y: anchor)) }
+                // just after a seek: straight there (no glide)
+                if Date().timeIntervalSince(seekedAt) < 1.0 {
+                    var t = Transaction(); t.disablesAnimations = true
+                    withTransaction(t) { proxy.scrollTo(new, anchor: UnitPoint(x: 0.5, y: anchor)) }
                     return
                 }
                 withAnimation(.timingCurve(0.45, 0.05, 0.15, 1, duration: 0.8)) {

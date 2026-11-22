@@ -11,7 +11,7 @@ extension Api {
 /// On the Libraries tab a library's title is the native menu that switches library.
 struct PageTitle: View {
     let text: String
-    var top: CGFloat = 66
+    var top: CGFloat = 90 // the web: about 45 between the search bar and the title's letters
     @Environment(Nav.self) private var nav
     var body: some View {
         Group {

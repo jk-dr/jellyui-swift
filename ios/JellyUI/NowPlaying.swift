@@ -116,7 +116,11 @@ struct MiniPlayer: View {
         }
     }
 
-    private func open() { FrameMonitor.event("player", "open"); pm.showFull = true }
+    private func open() {
+        FrameMonitor.event("player", "open")
+        // a full screen that was left marked open but is not showing (a close that was cut short) is reset, so a tap always opens it
+        if pm.showFull { pm.showFull = false; DispatchQueue.main.async { pm.showFull = true } } else { pm.showFull = true }
+    }
 
     private func mini(_ name: String, color: Color = Color(hex: 0xd4d4d4), _ a: @escaping () -> Void) -> some View {
         Button(action: a) { Icon(name: name, size: 22, color: color).frame(width: 38, height: 38) }.buttonStyle(.plain)
@@ -192,7 +196,7 @@ struct NowPlaying: View {
         ZStack {
             Color(hex: 0x0a0a0c)
             // the backdrop is there from the first frame (it came in late and faded up from black)
-            BackdropView(cover: cover, playing: pm.isPlaying).allowsHitTesting(false)
+            BackdropView(cover: cover, playing: pm.isPlaying, smooth: pm.smoothChange).allowsHitTesting(false)
             if late, let g = Grain.image { Image(uiImage: g).resizable(resizingMode: .tile).allowsHitTesting(false) }
 
             // the lyrics column: 76 under the safe area, 222 above the bottom; the sung line rests in its middle
@@ -202,7 +206,7 @@ struct NowPlaying: View {
                         LyricsView(lines: lines, player: pm, topInset: 25, bottomInset: UIScreen.main.bounds.height * 0.4, anchor: qp > 0.5 ? 0.25 : 0.4)
                             .mask(LinearGradient(gradient: LyricsFade.gradient, startPoint: .top, endPoint: .bottom))
                             .id(lyricsFor) // a new song gets a new column: it starts at its own first line, with no glide from the last song's place
-                            .transition(.opacity.animation(.easeIn(duration: 0.22)))
+                            .transition(pm.smoothChange ? .opacity.animation(.easeIn(duration: 0.22)) : .identity)
                     }
                     if loading && lines.isEmpty { Spinner() }
                 }
@@ -239,7 +243,7 @@ struct NowPlaying: View {
             // the strip down the right edge: a swipe up there raises the queue a level (closed -> small -> full), down lowers it or closes the screen.
             // It reaches down to the risen controls, so it works over the small queue too (the shrunk cover no longer covers the right side).
             if qp < 1.5 {
-                Color.clear.contentShape(Rectangle()).frame(width: 52).frame(maxWidth: .infinity, alignment: .trailing)
+                Color.clear.contentShape(Rectangle()).frame(width: 46).frame(maxWidth: .infinity, alignment: .trailing)
                     .padding(.top, top + 64).padding(.bottom, 222 + bottom + min(L, g.lift))
                     .gesture(zone(H))
             }
@@ -327,7 +331,11 @@ struct NowPlaying: View {
         // the song changed: its lines are put up in this same update (a task would run a frame later)
         .onChange(of: it?.id) { _, _ in if let c = pm.current, let m = LyricsMemo.map[c.id] { coverOnly = false; lines = m; loading = false; lyricsFor = c.id } }
         .task(id: it?.id) { await loadSong(it) }
-        .task(id: cover) { if let u = cover, let l = await CoverInk.load(u) { withAnimation(.easeInOut(duration: 0.5)) { look = l } } }
+        .task(id: cover) {
+            if let u = cover, let l = await CoverInk.load(u) {
+                if pm.smoothChange { withAnimation(.easeInOut(duration: 0.5)) { look = l } } else { look = l }
+            }
+        }
         .task(id: pm.next?.id) { if let n = pm.next, let u = Pic.square(n, 160) { _ = await CoverInk.load(u); _ = await CoverColours.load(u) } }
         .onChange(of: pm.current == nil) { _, none in if none { requestClose() } }
     }

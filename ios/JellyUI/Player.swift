@@ -8,7 +8,7 @@ import SwiftUI
 final class PlayerModel {
     static let shared = PlayerModel()
 
-    var queue: [Item] = [] { didSet { needPrep() } }
+    var queue: [Item] = [] { didSet { needPrep(); saveSoon() } }
     var index = 0
     var isPlaying = false
     var position: Double = 0 // updated about twice a second, for bars and labels
@@ -19,6 +19,12 @@ final class PlayerModel {
     var shuffleOn = false
     /// bumped by every seek: the lyrics re-sync to it at once
     var seeks = 0
+    /// the last song change was the song ending (the backdrop and colours cross-fade); a skip, a jump or a tap changes at once
+    var smoothChange = true
+    /// where a seek is going: shown (by `now`) until the player is really there, so the bar and the lyrics do not flick back first
+    @ObservationIgnored private var seekTarget: Double?
+    @ObservationIgnored private var seekToken = 0
+    @ObservationIgnored private var savePending = false
     @ObservationIgnored var more: (() async -> [Item])?
     @ObservationIgnored private var fetchingMore = false
     /// set while a film is playing: the lock screen's play, pause and seek then go to it
@@ -52,6 +58,7 @@ final class PlayerModel {
 
     /// the exact playback time right now (read by the lyrics every frame; it is not observable on purpose)
     var now: Double {
+        if let s = seekTarget { return s }
         let t = player.currentTime().seconds
         return t.isFinite ? t : position
     }
@@ -63,7 +70,8 @@ final class PlayerModel {
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] t in
             guard let self else { return }
             let s = t.seconds
-            if s.isFinite { self.position = s }
+            if s.isFinite && self.seekTarget == nil { self.position = s }
+            if s.isFinite && s >= 0 && s < 1e7 && Int(s) % 5 == 0 { self.saveSoon() } // the place in the song, kept every 5 s
             self.updateNowPlayingPosition()
             if Date().timeIntervalSince(self.lastReport) > 10 { self.report("Progress"); self.lastReport = Date() }
         }
@@ -146,8 +154,9 @@ final class PlayerModel {
 
     func moreQueue() { topUp() }
 
-    func jump(to i: Int) {
+    func jump(to i: Int, auto: Bool = false) {
         guard queue.indices.contains(i) else { return }
+        smoothChange = auto
         report("Stopped")
         index = i
         load()
@@ -170,6 +179,7 @@ final class PlayerModel {
         if i == index {
             // the playing song: the next one takes its place (the end of the queue stops playback)
             report("Stopped")
+            smoothChange = false
             queue.remove(at: i)
             if index >= queue.count { stop(); return }
             load()
@@ -188,10 +198,10 @@ final class PlayerModel {
     func nextSong(auto: Bool = false) {
         // (the finished item has left the queue player: the song is loaded again)
         if auto && repeatMode == "one" { load(); return }
-        if index + 1 < queue.count { jump(to: index + 1); return }
+        if index + 1 < queue.count { jump(to: index + 1, auto: auto); return }
         // at the end of an endless queue: wait for the songs on their way (topUp carries on from here)
         if fetchingMore { pendingEnd = auto; return }
-        if repeatMode == "all" && !queue.isEmpty { jump(to: 0) }
+        if repeatMode == "all" && !queue.isEmpty { jump(to: 0, auto: auto) }
         else if auto { report("Stopped"); load(); wantsPlay = false; player.pause(); isPlaying = false }
         else { stop() }
     }
@@ -208,8 +218,15 @@ final class PlayerModel {
     func pause() { wantsPlay = false; player.pause() }
 
     func seek(to s: Double) {
+        seekToken += 1
+        let tok = seekToken
+        seekTarget = max(0, s)
         player.seek(to: CMTime(seconds: max(0, s), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
-            DispatchQueue.main.async { self?.seeks += 1 } // once the player is really there
+            DispatchQueue.main.async { // once the player is really there
+                guard let self else { return }
+                if tok == self.seekToken { self.seekTarget = nil }
+                self.seeks += 1
+            }
         }
         position = s
         seeks += 1
@@ -283,8 +300,9 @@ final class PlayerModel {
         }
     }
 
-    private func load(universal: Bool = false) {
+    private func load(universal: Bool = false, autoplay: Bool = true, at start: Double = 0) {
         guard let it = current else { return }
+        seekTarget = nil
         // `universal` here means the second try: the original file as it is
         triedUniversal = universal
         guard let url = source(it, original: universal) else { return }
@@ -300,10 +318,11 @@ final class PlayerModel {
         player.removeAllItems()
         player.insert(avItem, after: nil)
         prepareNext()
-        wantsPlay = true
-        player.play()
-        report("Playing")
+        if start > 0 { position = start; player.seek(to: CMTime(seconds: start, preferredTimescale: 600)) }
+        wantsPlay = autoplay
+        if autoplay { player.play(); report("Playing") } else { player.pause(); isPlaying = false }
         lastReport = Date()
+        saveSoon()
         setNowPlaying(it)
         Task { _ = await LyricsStore.shared.load(it) } // lyrics ready before the screen opens
         if let n = next { Task { _ = await LyricsStore.shared.load(n) } }
@@ -314,6 +333,7 @@ final class PlayerModel {
     private func ended() {
         if repeatMode != "one", let p = prepared, let n = next, p.id == n.id, player.currentItem === p.item {
             report("Stopped")
+            smoothChange = true
             index += 1
             prepared = nil
             currentAV = p.item
@@ -331,6 +351,44 @@ final class PlayerModel {
             return
         }
         nextSong(auto: true)
+    }
+
+    // MARK: kept across launches
+
+    private struct Saved: Codable { var queue: [Item]; var index: Int; var position: Double }
+    private static var saveURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("player-queue.json")
+    }
+
+    /// The queue, the song and the place in it are written (once a second at most) so the player bar is back after the app restarts.
+    func saveSoon() {
+        if savePending { return }
+        savePending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.savePending = false; self?.save() }
+    }
+
+    func save() {
+        let url = Self.saveURL
+        guard !queue.isEmpty, queue.indices.contains(index) else {
+            DispatchQueue.global(qos: .utility).async { try? FileManager.default.removeItem(at: url) }
+            return
+        }
+        let from = max(0, index - 100), to = min(queue.count, from + 500)
+        let s = Saved(queue: Array(queue[from..<to]), index: index - from, position: now.isFinite ? now : 0)
+        DispatchQueue.global(qos: .utility).async {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if let d = try? JSONEncoder().encode(s) { try? d.write(to: url, options: .atomic) }
+        }
+    }
+
+    /// At launch: the last queue comes back, paused at the place it was left (nothing plays until the person presses play).
+    func restore() {
+        guard queue.isEmpty, let d = try? Data(contentsOf: Self.saveURL),
+              let s = try? JSONDecoder().decode(Saved.self, from: d), s.queue.indices.contains(s.index) else { return }
+        smoothChange = false
+        queue = s.queue
+        index = s.index
+        load(autoplay: false, at: s.position)
     }
 
     private func needPrep() {

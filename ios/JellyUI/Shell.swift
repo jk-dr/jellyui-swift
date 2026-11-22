@@ -120,6 +120,7 @@ struct RootView: View {
         .overlay { if p.showFull { NowPlaying().ignoresSafeArea() } }
         .environment(nav)
         .modifier(ConfirmHost())
+        .task { PlayerModel.shared.restore() } // the player bar as it was left
         // a full-screen cover does not inherit the environment: the film's screen read Nav and crashed
         .fullScreenCover(item: $n.play) { VideoScreen(request: $0).environment(nav).environment(player) }
         #if DEBUG

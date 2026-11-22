@@ -40,6 +40,9 @@ struct BackdropView: View {
     let playing: Bool
     /// hidden behind something opaque (the full queue): nothing is drawn until it shows again
     var covered = false
+    /// false: a skip; the new colours are there at once (no cross-fade)
+    var smooth = true
+    private let power = Power.shared
 
     @State private var a: [Float] = CoverColours.fallback
     @State private var b: [Float] = CoverColours.fallback
@@ -47,9 +50,10 @@ struct BackdropView: View {
     @State private var shownCover: URL?
 
     // the cover's colours are usually known already (the player bar loaded them): the first frame has them, no fade from grey
-    init(cover: URL?, playing: Bool, covered: Bool = false) {
+    init(cover: URL?, playing: Bool, smooth: Bool = true, covered: Bool = false) {
         self.cover = cover
         self.playing = playing
+        self.smooth = smooth
         self.covered = covered
         let c = cover.flatMap { CoverColours.cached($0) } ?? CoverColours.fallback
         _a = State(initialValue: c)
@@ -79,12 +83,12 @@ struct BackdropView: View {
         GeometryReader { geo in
             let w = geo.size.width / divisor
             let h = geo.size.height / divisor
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: covered || (!playing && fadeFrom == nil))) { tl in
+            TimelineView(.animation(minimumInterval: power.low ? 1.0 / 30.0 : 1.0 / 60.0, paused: covered || (!playing && fadeFrom == nil))) { tl in
                 let m = fadeFrom.map { min(1, max(0, tl.date.timeIntervalSince($0) / fade)) } ?? 0
                 Rectangle()
                     .fill(Color.black)
                     .frame(width: w, height: h)
-                    .colorEffect(ShaderLibrary.fluid(.float2(w, h), .float(clock.step(tl.date, running: playing)), .float(m), .floatArray(a), .floatArray(b)))
+                    .colorEffect(ShaderLibrary.fluid(.float2(w, h), .float(clock.step(tl.date, running: playing)), .float(m), .floatArray(a), .floatArray(b), BackdropView.mean(a), BackdropView.mean(b)))
                     .scaleEffect(divisor)
                     .frame(width: geo.size.width, height: geo.size.height)
                     .clipped()
@@ -96,8 +100,16 @@ struct BackdropView: View {
         .task(id: cover) { await change() }
     }
 
+    /// the cover's average (the shader's four corner samples, which land exactly on cells 1 and 4): worked out once here, not per pixel
+    static func mean(_ c: [Float]) -> Shader.Argument {
+        func cell(_ x: Int, _ y: Int, _ k: Int) -> Float { let o = (y * 6 + x) * 3 + k; return c.indices.contains(o) ? c[o] : 0.2 }
+        func m(_ k: Int) -> Float { 0.35 * (cell(1, 1, k) + cell(4, 1, k) + cell(1, 4, k) + cell(4, 4, k)) / 4 }
+        return .float3(m(0), m(1), m(2))
+    }
+
     private func change() async {
         guard let cover, cover != shownCover, let cols = await CoverColours.load(cover), !Task.isCancelled else { return }
+        if !smooth { a = cols; b = cols; fadeFrom = nil; shownCover = cover; return } // a skip: at once
         if shownCover == nil {
             a = cols
             b = cols

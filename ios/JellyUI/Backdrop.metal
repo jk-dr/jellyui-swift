@@ -27,7 +27,7 @@ static float3 tx(constant float *a, float2 q) {
     return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y) * 0.35;
 }
 
-[[ stitchable ]] half4 fluid(float2 position, half4 color, float2 size, float time, float mixAB, constant float *a, int na, constant float *b, int nb) {
+[[ stitchable ]] half4 fluid(float2 position, half4 color, float2 size, float time, float mixAB, constant float *a, int na, constant float *b, int nb, float3 ma, float3 mb) {
     float2 uv = float2(position.x / size.x, 1.0 - position.y / size.y);
     float2 p = (uv - 0.5) * float2(size.x / size.y, 1.0) * 1.9;
     float t = time * 0.5;
@@ -58,9 +58,7 @@ static float3 tx(constant float *a, float2 q) {
     }
     ca /= 3.0 + 8.0 * 2.5;
     cb /= 3.0 + 8.0 * 2.5;
-    float3 ma = (tx(a, float2(0.25, 0.25)) + tx(a, float2(0.75, 0.25)) + tx(a, float2(0.25, 0.75)) + tx(a, float2(0.75, 0.75))) * 0.25;
-    float3 mb = ma;
-    if (two) mb = (tx(b, float2(0.25, 0.25)) + tx(b, float2(0.75, 0.25)) + tx(b, float2(0.25, 0.75)) + tx(b, float2(0.75, 0.75))) * 0.25;
+    // ma, mb: the covers' averages, worked out once per frame on the CPU (they were eight lookups per pixel)
     ca = mix(ca, ma, 0.12);
     cb = mix(cb, mb, 0.12);
     if (!two) cb = ca;

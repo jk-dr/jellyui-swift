@@ -76,7 +76,7 @@ struct HomeScreen: View {
                 }
 
                 if settings.homeLibraries {
-                    HomeHeader("Libraries", top: showReqs ? 24 : 70)
+                    HomeHeader("Libraries", top: showReqs ? 24 : 80)
                     if libs.isEmpty && !loaded {
                         HRowSkeleton(height: 225, width: 150, pad: 28).padding(.vertical, 6)
                     } else if libs.isEmpty {

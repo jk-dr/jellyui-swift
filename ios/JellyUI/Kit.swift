@@ -615,3 +615,16 @@ struct SegmentedBar<T: Hashable>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
+
+
+/// Low Power Mode, watched: the backdrop then draws 30 frames a second and the lyrics at most 60.
+@Observable
+final class Power {
+    static let shared = Power()
+    var low = ProcessInfo.processInfo.isLowPowerModeEnabled
+    init() {
+        NotificationCenter.default.addObserver(forName: .NSProcessInfoPowerStateDidChange, object: nil, queue: .main) { [weak self] _ in
+            self?.low = ProcessInfo.processInfo.isLowPowerModeEnabled
+        }
+    }
+}

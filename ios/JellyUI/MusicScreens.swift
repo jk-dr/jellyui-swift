@@ -531,7 +531,8 @@ struct MusicScreen: View {
             if !toast.isEmpty { Text(toast).font(.q(13)).foregroundStyle(Color.dimText).padding(.horizontal, 28).padding(.top, 8) }
 
             H2("Playlists").padding(.top, -14)
-            HRow(height: 150, pad: 28) { ForEach(pls) { MusicTile(it: $0) } }
+            if !loadedOnce && playlists.isEmpty { HRowSkeleton(height: 150, width: 150, pad: 28) }
+            else { HRow(height: 150, pad: 28) { ForEach(pls) { MusicTile(it: $0) } } }
 
             if !favAlbums.isEmpty {
                 H2("Favourite Albums").padding(.top, -6)
@@ -540,7 +541,7 @@ struct MusicScreen: View {
 
             H2("Quick Play").padding(.top, -6)
             if quick.isEmpty {
-                if loadedOnce { Note("No songs yet.") }
+                if loadedOnce { Note("No songs yet.") } else { SongColumnSkeleton().padding(.top, 20) }
             } else {
                 RowColumns(songs: quick, colW: width - 56) { idx in
                     pm.play(Self.shuffledFrom(quick, idx), at: 0, more: { await Api.randomSongs(50) })
@@ -550,7 +551,7 @@ struct MusicScreen: View {
 
             H2("Recent Albums").padding(.top, -6)
             if recent.isEmpty {
-                if loadedOnce { Note("Nothing here yet.") }
+                if loadedOnce { Note("Nothing here yet.") } else { HRowSkeleton(height: 150, width: 150, pad: 28) }
             } else {
                 HRow(height: 150, pad: 28) { ForEach(recent) { MusicTile(it: $0) } }
             }
@@ -577,7 +578,7 @@ struct MusicScreen: View {
 
             H2("Recently downloaded").padding(.top, -6)
             if downloads.isEmpty {
-                if loadedOnce { Note("Nothing downloaded yet.") }
+                if loadedOnce { Note("Nothing downloaded yet.") } else { SongColumnSkeleton().padding(.top, 20) }
             } else {
                 RowColumns(songs: downloads, colW: width - 56) { idx in
                     pm.play(downloads, at: idx, more: { await Api.randomSongs(50) })
@@ -642,12 +643,10 @@ struct MusicScreen: View {
         let r = await Api.randomSongs(300)
         if r.isEmpty { return say("No songs found") }
         pm.shuffle(r, more: { await Api.randomSongs(100) })
-        say("Shuffling your songs")
     }
     private func shuffleSongs() async {
         guard let r = try? await Api.songs(["Limit": 3000, "Filters": "IsFavorite"]), !r.items.isEmpty else { return say("No favourite songs yet") }
         pm.shuffle(r.items)
-        say("Shuffling \(r.items.count) favourites")
     }
     private func shuffleAlbums() async {
         guard let r = try? await Api.items(["IncludeItemTypes": "MusicAlbum", "Recursive": true, "Filters": "IsFavorite", "Limit": 200]), !r.isEmpty else { return say("No favourite albums yet") }
@@ -658,7 +657,6 @@ struct MusicScreen: View {
         let flat = albums.flatMap { (by[$0.id] ?? []).shuffled() }
         if flat.isEmpty { return say("No songs in your favourite albums") }
         pm.play(flat, shuffle: true)
-        say("Shuffling \(albums.count) album\(albums.count == 1 ? "" : "s")")
     }
     private func shufflePlaylists() async {
         guard let r = try? await Api.items(["IncludeItemTypes": "Playlist", "Recursive": true, "Filters": "IsFavorite", "Limit": 100]), !r.isEmpty else { return say("No favourite playlists yet") }
@@ -666,7 +664,6 @@ struct MusicScreen: View {
         for p in r { for t in (try? await Api.playlistSongs(p.id)) ?? [] where seen.insert(t.id).inserted { flat.append(t) } }
         if flat.isEmpty { return say("Those playlists are empty") }
         pm.shuffle(flat)
-        say("Shuffling \(r.count) favourite playlist\(r.count == 1 ? "" : "s")")
     }
     private func shuffleDownloads() async {
         guard let d = try? await Api.request("/YtSearch/MyDownloads"), let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any], let ids = o["ids"] as? [String], !ids.isEmpty else { return say("You have not downloaded any songs yet") }
@@ -678,7 +675,6 @@ struct MusicScreen: View {
         }
         if flat.isEmpty { return say("Your downloaded songs are no longer here") }
         pm.shuffle(flat)
-        say("Shuffling \(flat.count) of your downloads")
     }
 }
 
@@ -835,4 +831,25 @@ struct ListScreen: View {
 struct ArtistScreen: View {
     let id: String
     var body: some View { ListScreen(id: id, kind: .artist) }
+}
+
+
+/// A Quick Play column while it loads: five rows of a 56 pt cover and two lines, as the rows it stands in for.
+struct SongColumnSkeleton: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(0..<5, id: \.self) { i in
+                HStack(spacing: 14) {
+                    Skeleton(width: 56, height: 56, radius: 8)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Skeleton(width: [170, 130, 190, 150, 120][i], height: 14, radius: 5)
+                        Skeleton(width: [110, 90, 120, 80, 100][i], height: 11, radius: 5)
+                    }
+                }
+                .padding(.vertical, 6)
+            }
+        }
+        .padding(.horizontal, 28)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
 }
