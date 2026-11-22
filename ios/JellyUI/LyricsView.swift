@@ -347,16 +347,16 @@ struct LyricsView: View {
             .onChange(of: clock.sidx) { _, new in
                 guard synced, new >= 0, Date() > hold else { return }
                 withAnimation(.timingCurve(0.45, 0.05, 0.15, 1, duration: 0.8)) {
-                    proxy.scrollTo(new, anchor: UnitPoint(x: 0.5, y: 0.5))
+                    proxy.scrollTo(new, anchor: UnitPoint(x: 0.5, y: 0.4))
                 }
             }
             .opacity(placed ? 1 : 0)
             .onAppear {
                 start()
                 // the lazy column has no layout yet on the first pass: place it, then place it again once it has, then show it
-                if synced, clock.sidx >= 0 { proxy.scrollTo(clock.sidx, anchor: UnitPoint(x: 0.5, y: 0.5)) }
+                if synced, clock.sidx >= 0 { proxy.scrollTo(clock.sidx, anchor: UnitPoint(x: 0.5, y: 0.4)) }
                 DispatchQueue.main.async {
-                    if synced, clock.sidx >= 0 { proxy.scrollTo(clock.sidx, anchor: UnitPoint(x: 0.5, y: 0.5)) }
+                    if synced, clock.sidx >= 0 { proxy.scrollTo(clock.sidx, anchor: UnitPoint(x: 0.5, y: 0.4)) }
                     withAnimation(.easeOut(duration: 0.2)) { placed = true }
                 }
             }

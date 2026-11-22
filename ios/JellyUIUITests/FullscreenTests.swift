@@ -52,9 +52,11 @@ final class FullscreenTests: XCTestCase {
         q.tap(); sleep(2); shot(a, "fs-5-queue")
         let row0 = a.descendants(matching: .any)["queue-row-0"]
         XCTAssertTrue(row0.waitForExistence(timeout: 3) && row0.isHittable, "tapping the queue button did not open the queue")
-        a.swipeDown(); sleep(2); shot(a, "fs-6-queue-closed")
-        XCTAssertFalse(row0.isHittable, "swiping down did not lower the queue")
-        if row0.isHittable { q.tap(); sleep(1) }
+        // opened by the button: the full queue, whose close button closes it altogether
+        let x = a.buttons["Close the queue"]
+        XCTAssertTrue(x.waitForExistence(timeout: 3) && x.isHittable, "the full queue has no close button")
+        x.tap(); sleep(2); shot(a, "fs-6-queue-closed")
+        XCTAssertFalse(row0.isHittable, "the close button did not close the queue")
 
         // swipe down closes the player; the player bar is then tappable
         let start = a.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.12))
