@@ -284,9 +284,8 @@ struct SongRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     if fav { Icon(name: "heart", size: 16, color: .pink) }
                 }
-                .padding(.vertical, 8).padding(.horizontal, 12) // the same size playing or not (it shifted by 2 pt)
-                .background(now ? Color(hex: 0x1d1618) : Color(hex: 0x121214), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(now ? Color.pink.opacity(0.35) : .clear, lineWidth: 1.2))
+                .padding(.vertical, 8).padding(.leading, 12) // the same size playing or not (it shifted by 2 pt)
+                .contentShape(Rectangle())
             }
             .buttonStyle(PressStyle())
             .contextMenu { SongMenuItems(it: it) }
@@ -294,6 +293,10 @@ struct SongRow: View {
                 Icon(name: "moreV", size: 20, color: Color(hex: 0xcfcfcf)).frame(width: 38, height: 38).contentShape(Rectangle())
             }
         }
+        .padding(.trailing, 4)
+        // the web's row box takes in the three dots too (full width, 12 round)
+        .background(now ? Color(hex: 0x1d1618) : Color(hex: 0x121214), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(now ? Color.pink.opacity(0.35) : .clear, lineWidth: 1.2))
         .padding(.horizontal, 16).padding(.bottom, 6)
     }
 }
@@ -329,9 +332,11 @@ struct MusicTile: View {
                 } else { Icon(name: "music", size: size * 0.34, color: Color(hex: 0x2c2c30)).frame(maxWidth: .infinity, maxHeight: .infinity) }
                 LinearGradient(colors: [.clear, Color.black.opacity(0.65)], startPoint: .top, endPoint: .bottom).frame(height: 60).frame(maxHeight: .infinity, alignment: .bottom)
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(it.title).font(.q(12)).foregroundStyle(Color.midText).lineLimit(1)
-                    Text(sub).font(.q(10)).foregroundStyle(Color.dimText).lineLimit(1)
-                }.padding(.horizontal, 14).padding(.bottom, 8)
+                    Text(it.title).font(.q(13)).foregroundStyle(Color(hex: 0xbababa)).lineLimit(1)
+                    Text(sub).font(.q(11)).foregroundStyle(Color(hex: 0xd4d4d4)).lineLimit(1)
+                }
+                .cardTextShadow()
+                .padding(.horizontal, 8).padding(.bottom, 5)
             }
             .frame(width: size, height: size)
             .clipShape(RoundedRectangle(cornerRadius: artist ? size / 2 : 12, style: .continuous))
@@ -349,31 +354,52 @@ struct MixTile: View {
     @Environment(Nav.self) private var nav
 
     var body: some View {
-        var pics = Array(covers.prefix(4))
-        while !pics.isEmpty && pics.count < 4 { pics.append(pics[pics.count % max(1, pics.count)]) }
+        // each picture once (songs of one album share a cover); laid out by how many there are, as the web's .mxg n1-n4
+        var seen = Set<URL>()
+        let pics = Array(covers.filter { seen.insert($0).inserted }.prefix(4))
         let cap = name.prefix(1).uppercased() + name.dropFirst()
         let h = genreHue(name)
+        let half = size / 2
         return Button { nav.go(.playlist("mix-" + slug(name))) } label: {
             ZStack(alignment: .bottomLeading) {
                 Color(hex: 0x181818)
-                if pics.isEmpty { Icon(name: "music", size: size * 0.34, color: Color(hex: 0x2c2c30)).frame(maxWidth: .infinity, maxHeight: .infinity) }
-                else {
+                switch pics.count {
+                case 0: Icon(name: "music", size: size * 0.4, color: Color(hex: 0x2c2c30)).frame(maxWidth: .infinity, maxHeight: .infinity)
+                case 1: Pic_(pics[0], radius: 0)
+                case 2: HStack(spacing: 0) { Pic_(pics[0], radius: 0).frame(width: half); Pic_(pics[1], radius: 0).frame(width: half) }
+                case 3:
+                    HStack(spacing: 0) {
+                        Pic_(pics[0], radius: 0).frame(width: half, height: size)
+                        VStack(spacing: 0) { Pic_(pics[1], radius: 0).frame(width: half, height: half); Pic_(pics[2], radius: 0).frame(width: half, height: half) }
+                    }
+                default:
                     VStack(spacing: 0) {
-                        HStack(spacing: 0) { Pic_(pics[0], radius: 0).frame(width: size / 2, height: size / 2); Pic_(pics[1], radius: 0).frame(width: size / 2, height: size / 2) }
-                        HStack(spacing: 0) { Pic_(pics[2], radius: 0).frame(width: size / 2, height: size / 2); Pic_(pics[3], radius: 0).frame(width: size / 2, height: size / 2) }
+                        HStack(spacing: 0) { Pic_(pics[0], radius: 0).frame(width: half, height: half); Pic_(pics[1], radius: 0).frame(width: half, height: half) }
+                        HStack(spacing: 0) { Pic_(pics[2], radius: 0).frame(width: half, height: half); Pic_(pics[3], radius: 0).frame(width: half, height: half) }
                     }
                 }
-                Color(h: h, s: 60, l: 45).opacity(0.28)
-                LinearGradient(colors: [.clear, Color.black.opacity(0.65)], startPoint: .top, endPoint: .bottom).frame(height: 60).frame(maxHeight: .infinity, alignment: .bottom)
+                // the web's .mxt: clear down to 30 %, then the genre's own colour (hsl h, 55 %, 22 %) at .92 at the bottom
+                LinearGradient(stops: [.init(color: .clear, location: 0.3), .init(color: Color(h: h, s: 55, l: 22).opacity(0.92), location: 1)], startPoint: .top, endPoint: .bottom)
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("\(cap) mix").font(.q(12)).foregroundStyle(Color.midText).lineLimit(1)
-                    Text("\(count ?? 0) songs").font(.q(10)).foregroundStyle(Color.dimText).lineLimit(1)
-                }.padding(.horizontal, 14).padding(.bottom, 8)
+                    Text("\(cap) mix").font(.q(13)).foregroundStyle(Color(hex: 0xf2f2f2)).lineLimit(1)
+                    Text("\(count ?? 0) songs").font(.q(11)).foregroundStyle(Color.white.opacity(0.7)).lineLimit(1)
+                }
+                .cardTextShadow()
+                .padding(.horizontal, 8).padding(.bottom, 5)
             }
             .frame(width: size, height: size)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(PressStyle())
+    }
+}
+
+extension View {
+    /// the web's card text shadow: 0 1 2 black .95, 0 0 6 black .9, 0 2 14 black .85
+    func cardTextShadow() -> some View {
+        shadow(color: .black.opacity(0.95), radius: 1, y: 1)
+            .shadow(color: .black.opacity(0.9), radius: 3)
+            .shadow(color: .black.opacity(0.85), radius: 7, y: 2)
     }
 }
 
@@ -422,12 +448,12 @@ struct RowColumns: View {
     var onPlay: (Int) -> Void
 
     var body: some View {
-        let cols = (songs.count + 2) / 3
+        let cols = (songs.count + 4) / 5
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(alignment: .top, spacing: 12) {
                 ForEach(0..<cols, id: \.self) { c in
                     VStack(spacing: 8) {
-                        ForEach(c * 3..<min(c * 3 + 3, songs.count), id: \.self) { i in
+                        ForEach(c * 5..<min(c * 5 + 5, songs.count), id: \.self) { i in
                             QuickRow(it: songs[i], index: i, width: colW, onPlay: onPlay)
                         }
                     }
@@ -465,6 +491,7 @@ struct TileWrap<Content: View>: View {
 struct MusicScreen: View {
     @Environment(PlayerModel.self) private var pm
     @State private var playlists: [Item] = Mem.stale("m.pl") ?? []
+    @State private var favCount: Int? = Mem.stale("m.favn")
     @State private var favAlbums: [Item] = Mem.stale("m.fa") ?? []
     @State private var recent: [Item] = Mem.stale("m.recent") ?? []
     @State private var mixes: Plugin.MixesData? = Mem.stale("m.mixes")
@@ -476,7 +503,9 @@ struct MusicScreen: View {
 
     var body: some View {
         let width = UIScreen.main.bounds.width
-        let pls = [Item(id: "favourites", name: "Favourites", type: "Playlist")] + playlists.filter { $0.id != "favourites" }
+        var fav = Item(id: "favourites", name: "Favourites", type: "Playlist")
+        let _ = (fav.childCount = favCount) // "83 songs", as the web's tile says
+        let pls = [fav] + playlists.filter { $0.id != "favourites" }
         let mixById = Dictionary((mixes?.items ?? []).map { ($0.id.replacingOccurrences(of: "-", with: "").lowercased(), $0) }, uniquingKeysWith: { _, b in b })
 
         Page(refresh: { await refresh() }) {
@@ -579,6 +608,7 @@ struct MusicScreen: View {
         async let m = Plugin.mixes()
         async let qk = Api.randomSongs(24)
         async let en = Self.enjoyed()
+        async let fc: ItemsResult? = try? Api.get("/Items", ["userId": Api.uid, "IncludeItemTypes": "Audio", "Recursive": true, "Filters": "IsFavorite", "Limit": 0])
         async let dl = try? Api.songs(["SortBy": "DateCreated", "SortOrder": "Descending", "Limit": 25])
         if let p = await p { playlists = p; Mem.set("m.pl", p) }
         if let fa = await fa { favAlbums = fa; Mem.set("m.fa", fa) }
@@ -587,6 +617,7 @@ struct MusicScreen: View {
         quick = await qk
         if let dl = await dl { downloads = dl.items }
         enjoy = await en
+        if let n = await fc?.totalRecordCount { favCount = n; Mem.set("m.favn", n) }
         loadedOnce = true
     }
 

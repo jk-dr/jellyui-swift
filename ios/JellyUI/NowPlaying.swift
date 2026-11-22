@@ -190,7 +190,7 @@ struct NowPlaying: View {
             if showLyrics {
                 ZStack {
                     if early && !lines.isEmpty {
-                        LyricsView(lines: lines, player: pm, topInset: 25, bottomInset: UIScreen.main.bounds.height * 0.4)
+                        LyricsView(lines: lines, player: pm, topInset: 25, bottomInset: UIScreen.main.bounds.height * 0.4, anchor: qp > 0.5 ? 0.25 : 0.4)
                             .mask(LinearGradient(gradient: LyricsFade.gradient, startPoint: .top, endPoint: .bottom))
                             .id(lyricsFor) // a new song gets a new column: it starts at its own first line, with no glide from the last song's place
                             .transition(.opacity.animation(.easeIn(duration: 0.22)))
@@ -203,10 +203,10 @@ struct NowPlaying: View {
                     VStack(spacing: 0) {
                         Rectangle()
                         LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom).frame(height: 0.2 * g.lift * min(1, qp))
-                        Color.clear.frame(height: (qp > 0 ? 222 + bottom : 0) + min(L, g.lift) / 2)
+                        Color.clear.frame(height: (qp > 0 ? 222 + bottom : 0) + min(L, g.lift))
                     }
                 }
-                .offset(y: -up - min(L, g.lift) / 2).opacity(qp > 1 ? Double(2 - qp) : 1)
+                .offset(y: -up).opacity(qp > 1 ? Double(2 - qp) : 1)
                 // the strip down the right edge closes the screen from over the lyrics
                 Color.clear.contentShape(Rectangle()).frame(width: 46).frame(maxWidth: .infinity, alignment: .trailing)
                     .padding(.top, top + 76).padding(.bottom, 222 + bottom).gesture(zone(H, noQueue: true))
@@ -516,6 +516,8 @@ struct QueuePanel: View {
                     if y < -60 { set(max(0, level.rounded() - 1)) }
                     else if y > 24 && level > 0.5 && level < 1.5 { set(2) }
                 }
+                // the web's: in the small queue the list is lifted by the 40 kept for the chevron, so it starts right under the buttons
+                .offset(y: -40 * (1 - max(0, min(1, level - 1))))
                 .onAppear { proxy.scrollTo(pm.index, anchor: .top) }
                 // the playing song goes to the top at once, with no animation
                 .onChange(of: pm.index) { _, n in var t = Transaction(); t.disablesAnimations = true; withTransaction(t) { proxy.scrollTo(n, anchor: .top) } }

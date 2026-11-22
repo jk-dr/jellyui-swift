@@ -303,6 +303,8 @@ struct LyricsView: View {
     let player: PlayerModel
     var topInset: CGFloat = 40
     var bottomInset: CGFloat = 200
+    /// where the sung line rests, down the column (0.4; higher while the small queue covers the lower part)
+    var anchor: CGFloat = 0.4
 
     @Environment(\.ink) private var ink
     @State private var clock = LyricsClock()
@@ -311,7 +313,8 @@ struct LyricsView: View {
     @State private var placed = false
 
     // written out (not the memberwise one): the private state above would make that initializer private
-    init(lines: [LyricLine], player: PlayerModel, topInset: CGFloat = 40, bottomInset: CGFloat = 200) {
+    init(lines: [LyricLine], player: PlayerModel, topInset: CGFloat = 40, bottomInset: CGFloat = 200, anchor: CGFloat = 0.4) {
+        self.anchor = anchor
         self.lines = lines
         self.player = player
         self.topInset = topInset
@@ -358,22 +361,27 @@ struct LyricsView: View {
             .onChange(of: clock.sidx) { _, new in
                 guard synced, new >= 0, Date() > hold else { return }
                 withAnimation(.timingCurve(0.45, 0.05, 0.15, 1, duration: 0.8)) {
-                    proxy.scrollTo(new, anchor: UnitPoint(x: 0.5, y: 0.4))
+                    proxy.scrollTo(new, anchor: UnitPoint(x: 0.5, y: anchor))
                 }
             }
             .opacity(placed ? 1 : 0)
             .onAppear {
                 start()
                 // the lazy column has no layout yet on the first pass: place it, then place it again once it has, then show it
-                if synced, clock.sidx >= 0 { proxy.scrollTo(clock.sidx, anchor: UnitPoint(x: 0.5, y: 0.4)) }
+                if synced, clock.sidx >= 0 { proxy.scrollTo(clock.sidx, anchor: UnitPoint(x: 0.5, y: anchor)) }
                 DispatchQueue.main.async {
-                    if synced, clock.sidx >= 0 { proxy.scrollTo(clock.sidx, anchor: UnitPoint(x: 0.5, y: 0.4)) }
+                    if synced, clock.sidx >= 0 { proxy.scrollTo(clock.sidx, anchor: UnitPoint(x: 0.5, y: anchor)) }
                     withAnimation(.easeOut(duration: 0.2)) { placed = true }
                 }
             }
             .onChange(of: lines.first?.id) { _, _ in start() }
             .onChange(of: playing) { _, _ in start() } // a resume or a seek wakes the clock at once
-            .onChange(of: player.seeks) { _, _ in start() } // a seek (bar, lock screen, a line) re-syncs the lines at once
+            .onChange(of: player.seeks) { _, _ in start() }
+            // the small queue opened or closed: the sung line glides to its new resting place, with the queue's own curve
+            .onChange(of: anchor) { _, a in
+                guard synced, clock.sidx >= 0 else { return }
+                withAnimation(.timingCurve(0.5, 0, 0.2, 1, duration: 0.27)) { proxy.scrollTo(clock.sidx, anchor: UnitPoint(x: 0.5, y: a)) }
+            } // a seek (bar, lock screen, a line) re-syncs the lines at once
             // a seek (a row tap or the bar) while paused: the paused sung row is redrawn, as it is not on a timeline
             // only this tiny view reads the position (it changes twice a second): the column itself is not redrawn for it
             .background { if !playing { SeekWatch(player: player) { seekTick += 1 } } }
