@@ -59,7 +59,7 @@ struct HomeScreen: View {
 
     var body: some View {
         let w = UIScreen.main.bounds.width
-        let cw = w - 32
+        let cw = w - 56
         let h = home
         let availKinds = kinds.filter { k in h?.services?.contains { $0.kind == k.0 } ?? false }
         let activeKind = availKinds.contains { $0.0 == svcKind } ? svcKind : (availKinds.first?.0 ?? svcKind)
@@ -75,33 +75,33 @@ struct HomeScreen: View {
                 }
 
                 if settings.homeLibraries {
-                    H2("Libraries", first: !showReqs)
+                    HomeHeader("Libraries", top: showReqs ? 24 : 70)
                     if libs.isEmpty && !loaded {
-                        HRowSkeleton(height: 225, width: 150)
+                        HRowSkeleton(height: 225, width: 150, pad: 28).padding(.vertical, 6)
                     } else if libs.isEmpty {
                         Text("No libraries yet.").font(.q(16)).foregroundStyle(Color.dimText).frame(maxWidth: .infinity).padding(.top, 30)
                     } else {
-                        HRow(height: 225) { ForEach(libs) { LibraryTile(v: $0, cover: covers[$0.id]) } }
+                        HomeRow(height: 225) { ForEach(libs) { LibraryTile(v: $0, cover: covers[$0.id]) } }
                     }
                 }
 
                 if h?.ready == true, !availKinds.isEmpty {
-                    H2("Explore Services", first: !settings.homeLibraries && !showReqs)
-                    SegmentedBar(options: availKinds.map { ($0.0, $0.1, nil) }, value: Binding(get: { activeKind }, set: { svcKind = $0 }))
-                    HRow(height: 72) { ForEach(svcList) { ServiceLogo(s: $0) } }.padding(.top, 10)
+                    HomeHeader("Explore Services", top: showReqs ? 18 : 36)
+                    HomePills(options: availKinds.map { (value: $0.0, label: $0.1) }, value: Binding(get: { activeKind }, set: { svcKind = $0 }), top: 10)
+                    HomeRow(height: 72) { ForEach(svcList) { ServiceLogo(s: $0) } }.padding(.top, 2)
                 } else if h == nil && !loaded {
-                    H2("Explore Services", first: !settings.homeLibraries && !showReqs)
-                    HRowSkeleton(height: 72, width: 72)
+                    HomeHeader("Explore Services", top: showReqs ? 18 : 36)
+                    HRowSkeleton(height: 72, width: 72, pad: 28).padding(.vertical, 6)
                 }
 
                 if settings.homeGenres, h?.ready == true, let g = h?.genres, !g.isEmpty {
-                    H2("Genres")
-                    HRow(height: 84, gap: 10) { ForEach(g) { GenreTile(g: $0) } }
+                    HomeHeader("Genres")
+                    HomeRow(height: 84, gap: 10) { ForEach(g) { GenreTile(g: $0) } }
                 }
 
                 if settings.homeContinue, !resume.isEmpty {
-                    H2("Continue Watching")
-                    HRow(height: cw * 0.5625 + 12, pad: 16, snap: cw) { ForEach(resume) { ContinueCard(it: $0, width: cw) } }
+                    HomeHeader("Continue Watching")
+                    HomeRow(height: cw * 0.5625, snap: cw) { ForEach(resume) { ContinueCard(it: $0, width: cw) } }
                 }
 
                 if settings.homeTrending, h?.ready == true, let secs = h?.sections {
@@ -109,21 +109,21 @@ struct HomeScreen: View {
                         let mixed = sec.items.contains { $0.t == "m" } && sec.items.contains { $0.t == "s" }
                         let f = filters[i] ?? "all"
                         let cards = sec.items.map { $0.card }.filter { f == "all" || String($0.t) == f }
-                        H2(sec.title)
+                        HomeHeader(sec.title)
                         if mixed {
-                            SegmentedBar(options: [("all", "All", nil), ("m", "Movie", nil), ("s", "Show", nil)],
-                                         value: Binding(get: { f }, set: { filters[i] = $0 }))
+                            HomePills(options: [(value: "all", label: "All"), (value: "m", label: "Movie"), (value: "s", label: "Show")],
+                                      value: Binding(get: { f }, set: { filters[i] = $0 }), top: 8)
                         }
                         if cards.isEmpty {
                             Text("Nothing here").font(.q(16)).foregroundStyle(Color.dimText).frame(maxWidth: .infinity).padding(.top, 30)
                         } else {
-                            HRow(height: 225) { ForEach(cards) { TileCard(card: $0, width: 150, badge: mixed && f == "all") } }
+                            HomeRow(height: 225) { ForEach(cards) { HomeTile(card: $0, badge: mixed && f == "all") } }
                         }
                     }
                 }
 
                 if let h, h.ready != true, h.seerr == false {
-                    Note("Seerr is not set up in the On-Demand plugin, so services, genres and trending are unavailable.")
+                    Note("Seerr is not set up in the On-Demand plugin, so services, genres and trending are unavailable.").padding(.horizontal, 12)
                 }
             }
         }
@@ -166,6 +166,104 @@ struct HomeScreen: View {
     }
 }
 
+// MARK: - Home rows and headings (the web's phone sizes: 28 in from the edge)
+
+/// A section heading: Questrial 20, pink, 28 in from the edge; `top` is the room above it.
+private struct HomeHeader: View {
+    let text: String
+    var top: CGFloat
+    init(_ t: String, top: CGFloat = 36) { text = t; self.top = top }
+    var body: some View {
+        Text(text).font(.q(20)).foregroundStyle(Color.pink)
+            .shadow(color: .black, radius: 4, y: 1)
+            .padding(.leading, 28).padding(.top, top)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A row of cards (the web's .libs, .svc, .gens, .cont): starts 28 in, 6 above and 6 below the cards.
+private struct HomeRow<Content: View>: View {
+    var height: CGFloat
+    var gap: CGFloat = 12
+    var snap: CGFloat?
+    @ViewBuilder var content: () -> Content
+    var body: some View {
+        HRow(height: height, gap: gap, pad: 28, snap: snap) { content() }
+            .padding(.top, 6).padding(.bottom, 6)
+    }
+}
+
+/// The web's All / Movie / Show and Networks / Streaming / Studios switch: pink on the chosen one, 28 in from the edge.
+private struct HomePills<T: Hashable>: View {
+    let options: [(value: T, label: String)]
+    @Binding var value: T
+    var top: CGFloat
+    var body: some View {
+        HStack(spacing: 2.4) {
+            ForEach(Array(options.enumerated()), id: \.offset) { _, o in
+                let on = o.value == value
+                Button { value = o.value } label: {
+                    Text(o.label).font(.q(14)).lineLimit(1).frame(height: 20)
+                        .foregroundStyle(on ? Color.bg : Color.midText)
+                        .padding(.horizontal, 16).padding(.vertical, 6)
+                        .background(on ? Color.pink : Color.clear, in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .background(Color(hex: 0x16161a), in: Capsule())
+        .padding(.leading, 28).padding(.top, top)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// The web's cover fade for the tall tiles (.lib.has:before)
+private struct HomeFade: View {
+    var body: some View {
+        let stops: [Gradient.Stop] = [
+            .init(color: Color(hex: 0x0c0c0e, alpha: 0.8), location: 0), .init(color: Color(hex: 0x0c0c0e, alpha: 0.61), location: 0.12),
+            .init(color: Color(hex: 0x0c0c0e, alpha: 0.45), location: 0.21), .init(color: Color(hex: 0x0c0c0e, alpha: 0.24), location: 0.29),
+            .init(color: Color(hex: 0x0c0c0e, alpha: 0.07), location: 0.37), .init(color: Color(hex: 0x0c0c0e, alpha: 0.12), location: 0.46),
+            .init(color: Color(hex: 0x0c0c0e, alpha: 0.33), location: 0.54), .init(color: Color(hex: 0x0c0c0e, alpha: 0.52), location: 0.62),
+            .init(color: Color(hex: 0x0c0c0e, alpha: 0.68), location: 0.71), .init(color: Color(hex: 0x0c0c0e, alpha: 0.73), location: 0.79),
+            .init(color: Color(hex: 0x0c0c0e, alpha: 0.8), location: 0.87), .init(color: Color(hex: 0x0c0c0e, alpha: 0.86), location: 1),
+        ]
+        LinearGradient(stops: stops, startPoint: .top, endPoint: .bottom)
+    }
+}
+
+/// A title in the Trending and Popular rows: the web's .lib tile (150 x 225, 12 corners), with the type badge top right when asked.
+private struct HomeTile: View {
+    let card: Card
+    var badge = false
+    @Environment(Nav.self) private var nav
+    var body: some View {
+        let sub = (card.t == "m" || card.t == "s") ? card.sub.replacingOccurrences(of: "^(Movie|Show)( · )?", with: "", options: .regularExpression) : card.sub
+        Button { nav.go(card.route) } label: {
+            ZStack(alignment: .bottomLeading) {
+                LinearGradient(colors: [Color(hex: 0x181818), Color(hex: 0x0f0f11)], startPoint: .top, endPoint: .bottom)
+                if card.img != nil {
+                    Pic_(card.img, radius: 0)
+                    HomeFade()
+                } else {
+                    Text(String(card.title.prefix(1))).font(.q(56)).foregroundStyle(Color(hex: 0x2c2c30))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top).padding(.top, 64)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(card.title).font(.q(16)).foregroundStyle(Color.midText).lineLimit(1)
+                    if !sub.isEmpty { Text(sub).font(.q(11)).foregroundStyle(Color.dimText).lineLimit(1) }
+                }
+                .padding(.horizontal, 9).padding(.bottom, 15)
+                if badge { TypeBadge(t: card.t).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing) }
+            }
+            .frame(width: 150, height: 225)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(PressStyle())
+    }
+}
+
 // MARK: - Tiles
 
 struct LibraryTile: View {
@@ -196,7 +294,7 @@ struct LibraryTile: View {
                 LinearGradient(colors: [Color(hex: 0x181818), Color(hex: 0x0f0f11)], startPoint: .top, endPoint: .bottom)
                 if let u = cover?.img {
                     Pic_(u, radius: 0)
-                    LibFade()
+                    HomeFade()
                 } else {
                     SVGPath(d: Self.icons[ct] ?? Self.icons["photo"]!).fill(Color(hex: 0x232323)).frame(width: 60, height: 60)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(.leading, 45).padding(.top, 80)
@@ -208,7 +306,7 @@ struct LibraryTile: View {
                 .padding(.horizontal, 9).padding(.bottom, 15)
             }
             .frame(width: 150, height: 225)
-            .clipShape(RoundedRectangle(cornerRadius: 9.6, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(PressStyle())
     }
@@ -224,13 +322,13 @@ struct ServiceLogo: View {
             ZStack {
                 (co ? Color.surfaceHi : Color.surface)
                 if let u {
-                    if co { Pic_(u, radius: 0, fit: .fit).frame(width: 52, height: 52) } else { Pic_(u, radius: 0) }
+                    if co { Pic_(u, radius: 0, fit: .fit).frame(width: 52, height: 52).brightness(0.15) } else { Pic_(u, radius: 0) }
                 } else {
                     Text(s.name).font(.q(11)).foregroundStyle(Color.dimText).multilineTextAlignment(.center).padding(4)
                 }
             }
             .frame(width: 72, height: 72)
-            .clipShape(RoundedRectangle(cornerRadius: 7.2, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(PressStyle())
     }
@@ -322,13 +420,13 @@ struct ContinueCard: View {
                 }
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.white.opacity(0.35))
-                    GeometryReader { g in Capsule().fill(Color.white).frame(width: g.size.width * min(1, pct / 100)) }
+                    Capsule().fill(Color.white).frame(width: (width - 28) * CGFloat(min(1, pct / 100)))
                 }
                 .frame(height: 2.4).padding(.horizontal, 14)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom).padding(.bottom, 14)
             }
             .frame(width: width, height: width * 0.5625)
-            .clipShape(RoundedRectangle(cornerRadius: 9.6, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(PressStyle())
     }

@@ -87,6 +87,47 @@ struct AddToPlaylistMenu<Content: View>: View {
     }
 }
 
+/// An album's or playlist's ⋮ menu: Add all to queue, Add all to playlist (a submenu, or a new playlist), and Favourite when `favOn` is given.
+struct ListMenu: View {
+    let songs: [Item]
+    var favOn: Bool?
+    var onFav: () -> Void
+    @Environment(PlayerModel.self) private var pm
+    @State private var naming = false
+    @State private var name = ""
+    private let pls = PlaylistCache.shared
+
+    var body: some View {
+        let ids = songs.map { $0.id }
+        Menu {
+            Button { songs.forEach { pm.enqueueLast($0) } } label: { Label("Add all to queue", systemImage: "text.badge.plus") }
+            Menu {
+                Button { naming = true } label: { Label("New playlist…", systemImage: "plus") }
+                ForEach(pls.list) { p in
+                    Button { Task { _ = try? await Api.request("/Playlists/\(p.id)/Items", query: ["ids": ids.joined(separator: ","), "userId": Api.uid], method: "POST") } } label: { Label(p.title, systemImage: "music.note.list") }
+                }
+            } label: { Label("Add all to playlist", systemImage: "music.note.list") }
+            if let favOn {
+                Button(action: onFav) { Label(favOn ? "Remove from favourites" : "Add to favourites", systemImage: favOn ? "heart.slash" : "heart") }
+            }
+        } label: {
+            Icon(name: "more", size: 20, color: .pink).frame(width: 44, height: 44).background(Color.surfaceHi, in: Circle())
+        }
+        .disabled(songs.isEmpty)
+        .onAppear { pls.load() }
+        .alert("New playlist", isPresented: $naming) {
+            TextField("Name for the playlist", text: $name)
+            Button("Cancel", role: .cancel) { name = "" }
+            Button("Create") {
+                let n = name.trimmingCharacters(in: .whitespaces)
+                name = ""
+                guard !n.isEmpty else { return }
+                Task { _ = try? await Api.request("/Playlists", method: "POST", body: ["Name": n, "Ids": ids, "UserId": Api.uid, "MediaType": "Audio"]); pls.reset() }
+            }
+        }
+    }
+}
+
 /// A song's menu: Play next, Add to queue, Add to playlist (a submenu), Favourite, Go to album. In the player also Shuffle and Repeat.
 struct SongMenu<Content: View>: View {
     let it: Item
@@ -134,7 +175,7 @@ struct EqBars: View {
     }
 }
 
-/// A song row, as the web draws it on a phone (.trk): number or equaliser, cover, title over artist · album • length, heart, length.
+/// A song row, as the web draws it on a phone (.trk): cover, title over "artist • length", a heart when it is a favourite, and a ⋮ button.
 struct SongRow: View {
     let it: Item
     let index: Int
@@ -161,11 +202,10 @@ struct SongRow: View {
                     if showArt { Pic_(Pic.poster(it, h: 100), radius: 6).frame(width: 40, height: 40) }
                     VStack(alignment: .leading, spacing: 0) {
                         Text(n.t + (n.live ? " (Live)" : "")).font(.q(15)).foregroundStyle(now ? Color.pink : Color(hex: 0xd4d4d4)).lineLimit(1)
-                        Text(who + (showArt && it.album != nil ? " · \(it.album!)" : "") + (len.isEmpty ? "" : " • \(len)")).font(.q(12)).foregroundStyle(Color.dimText).lineLimit(1)
+                        Text(who + (len.isEmpty ? "" : " • \(len)")).font(.q(12)).foregroundStyle(Color.dimText).lineLimit(1)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     if fav { Icon(name: "heart", size: 16, color: .pink) }
-                    if !len.isEmpty { Text(len).font(.q(15)).foregroundStyle(Color.dimText).monospacedDigit() }
                 }
                 .padding(.vertical, now ? 6.8 : 8).padding(.horizontal, now ? 10.8 : 12)
                 .background(now ? Color(hex: 0x1d1618) : Color(hex: 0x121214), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -174,7 +214,7 @@ struct SongRow: View {
             .buttonStyle(PressStyle())
             .contextMenu { SongMenu(it: it) { EmptyView() }.actions }
             SongMenu(it: it) {
-                Icon(name: "more", size: 20, color: Color.dimText).frame(width: 28, height: 40).contentShape(Rectangle())
+                Icon(name: "more", size: 20, color: Color(hex: 0xcfcfcf)).frame(width: 38, height: 38).contentShape(Rectangle())
             }
         }
         .padding(.horizontal, 16).padding(.bottom, 6)
@@ -203,10 +243,10 @@ struct MusicTile: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(it.title).font(.q(12)).foregroundStyle(Color.midText).lineLimit(1)
                     Text(sub).font(.q(10)).foregroundStyle(Color.dimText).lineLimit(1)
-                }.padding(.horizontal, 8.4).padding(.bottom, 4.8)
+                }.padding(.horizontal, 14).padding(.bottom, 8)
             }
             .frame(width: size, height: size)
-            .clipShape(RoundedRectangle(cornerRadius: artist ? size / 2 : 9.6, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: artist ? size / 2 : 12, style: .continuous))
         }
         .buttonStyle(PressStyle())
     }
@@ -240,35 +280,75 @@ struct MixTile: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Text("\(cap) mix").font(.q(12)).foregroundStyle(Color.midText).lineLimit(1)
                     Text("\(count ?? 0) songs").font(.q(10)).foregroundStyle(Color.dimText).lineLimit(1)
-                }.padding(.horizontal, 8.4).padding(.bottom, 4.8)
+                }.padding(.horizontal, 14).padding(.bottom, 8)
             }
             .frame(width: size, height: size)
-            .clipShape(RoundedRectangle(cornerRadius: 9.6, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(PressStyle())
     }
 }
 
-/// A Quick Play tile (the web's .tk): the cover as a square, the title and artist under it.
-struct QuickTile: View {
+/// One song of a Quick Play column (the web's .tk on a phone): a 56 pt cover, title over artist, and a ⋮ button at its right.
+struct QuickRow: View {
     let it: Item
     let index: Int
     let width: CGFloat
     var onPlay: (Int) -> Void
+
     var body: some View {
         let n = songName(it.title)
-        Button { onPlay(index) } label: {
-            VStack(alignment: .leading, spacing: 0) {
-                Group {
-                    if let u = Pic.poster(it, h: 200) { Pic_(u, radius: 0) } else { Icon(name: "music", size: width * 0.5, color: Color(hex: 0x2c2c30)) }
+        HStack(spacing: 0) {
+            Button { onPlay(index) } label: {
+                HStack(spacing: 14) {
+                    Group {
+                        if let u = Pic.poster(it, h: 200) { Pic_(u, radius: 0) }
+                        else { Color.surfaceHi.overlay(Icon(name: "music", size: 26, color: Color(hex: 0x2c2c30))) }
+                    }
+                    .frame(width: 56, height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(n.t).font(.q(16)).foregroundStyle(Color(hex: 0xd4d4d4)).lineLimit(1)
+                        Text(it.artistLine).font(.q(14)).foregroundStyle(Color.dimText).lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(width: width, height: width).background(Color.surfaceHi).clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous)).padding(.bottom, 4.2)
-                Text(n.t).font(.q(11)).foregroundStyle(Color(hex: 0xd4d4d4)).lineLimit(1).frame(width: width, alignment: .leading)
-                Text(it.artistLine).font(.q(10)).foregroundStyle(Color.dimText).lineLimit(1).frame(width: width, alignment: .leading)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(PressStyle())
+            .contextMenu { SongMenu(it: it) { EmptyView() }.actions }
+            SongMenu(it: it) {
+                Icon(name: "more", size: 22, color: Color(hex: 0xbdbdc2)).frame(width: 40, height: 40).contentShape(Rectangle())
             }
         }
-        .buttonStyle(PressStyle())
-        .contextMenu { SongMenu(it: it) { EmptyView() }.actions }
+        .frame(width: width)
+    }
+}
+
+/// Songs in columns of four, side by side and paged by swiping (the web's Quick Play and Recently downloaded on a phone).
+struct RowColumns: View {
+    let songs: [Item]
+    let colW: CGFloat
+    var onPlay: (Int) -> Void
+
+    var body: some View {
+        let cols = (songs.count + 3) / 4
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(alignment: .top, spacing: 12) {
+                ForEach(0..<cols, id: \.self) { c in
+                    VStack(spacing: 8) {
+                        ForEach(c * 4..<min(c * 4 + 4, songs.count), id: \.self) { i in
+                            QuickRow(it: songs[i], index: i, width: colW, onPlay: onPlay)
+                        }
+                    }
+                    .frame(width: colW, alignment: .top)
+                }
+            }
+            .scrollTargetLayout()
+        }
+        .contentMargins(.horizontal, 28, for: .scrollContent)
+        .scrollTargetBehavior(.viewAligned)
     }
 }
 
@@ -290,23 +370,12 @@ struct MusicScreen: View {
     @State private var recent: [Item] = Mem.stale("m.recent") ?? []
     @State private var mixes: Plugin.MixesData? = Mem.stale("m.mixes")
     @State private var quick: [Item] = []
+    @State private var downloads: [Item] = []
     @State private var toast = ""
-    @State private var q = ""
-    @State private var pageNo = 1
-    @State private var list: [Item] = []
-    @State private var total = 0
-    @State private var loadingList = true
-    @State private var listErr = ""
     @State private var loadedOnce = false
-
-    private let PAGE = 100
 
     var body: some View {
         let width = UIScreen.main.bounds.width
-        let inner = width - 18
-        let cols = max(3, Int(floor((inner + 10) / (84 + 10))))
-        let tileW = (inner - 10 * CGFloat(cols - 1)) / CGFloat(cols)
-        let pages = max(1, Int(ceil(Double(total) / Double(PAGE))))
         let pls = [Item(id: "favourites", name: "Favourites", type: "Playlist")] + playlists.filter { $0.id != "favourites" }
         let mixById = Dictionary((mixes?.items ?? []).map { ($0.id.replacingOccurrences(of: "-", with: "").lowercased(), $0) }, uniquingKeysWith: { _, b in b })
 
@@ -322,37 +391,43 @@ struct MusicScreen: View {
                 HStack(spacing: 8) {
                     Icon(name: "shuffle", size: 20, color: .bg)
                     Text("Shuffle").font(.q(16)).foregroundStyle(Color.bg)
-                    Icon(name: "chevronDown", size: 20, color: .bg)
+                    Spacer(minLength: 8)
+                    Icon(name: "chevronDown", size: 22, color: .bg)
                 }
+                .padding(.leading, 20).padding(.trailing, 16)
                 .frame(maxWidth: .infinity).frame(height: 44).background(Color.pink, in: Capsule())
             }
-            .padding(.horizontal, 16).padding(.top, 10)
-            if !toast.isEmpty { Text(toast).font(.q(13)).foregroundStyle(Color.dimText).padding(.leading, 16).padding(.top, 8) }
+            .padding(.horizontal, 28).padding(.top, 14)
+            if !toast.isEmpty { Text(toast).font(.q(13)).foregroundStyle(Color.dimText).padding(.horizontal, 28).padding(.top, 8) }
 
             H2("Playlists").padding(.top, -14)
-            HRow(height: 150) { ForEach(pls) { MusicTile(it: $0) } }
+            HRow(height: 150, pad: 28) { ForEach(pls) { MusicTile(it: $0) } }
 
             if !favAlbums.isEmpty {
                 H2("Favourite Albums").padding(.top, -6)
-                TileWrap { ForEach(favAlbums) { MusicTile(it: $0) } }
+                HRow(height: 150, pad: 28) { ForEach(favAlbums) { MusicTile(it: $0) } }
             }
 
-            H2("Quick Play").padding(.top, 30 - 36)
-            WordFlowGrid(spacing: 10, rowSpacing: 12) {
-                ForEach(Array(quick.prefix(cols * 3).enumerated()), id: \.element.id) { i, it in
-                    QuickTile(it: it, index: i, width: tileW) { idx in
-                        pm.play(quick, at: idx, more: { await Api.randomSongs(50) })
-                    }
+            H2("Quick Play").padding(.top, -6)
+            if quick.isEmpty {
+                if loadedOnce { Note("No songs yet.") }
+            } else {
+                RowColumns(songs: quick, colW: width - 56) { idx in
+                    pm.play(quick, at: idx, more: { await Api.randomSongs(50) })
                 }
+                .padding(.top, 20)
             }
-            .padding(4).padding(.horizontal, 5).padding(.top, 12)
 
             H2("Recent Albums").padding(.top, -6)
-            HRow(height: 150) { ForEach(recent) { MusicTile(it: $0) } }
+            if recent.isEmpty {
+                if loadedOnce { Note("Nothing here yet.") }
+            } else {
+                HRow(height: 150, pad: 28) { ForEach(recent) { MusicTile(it: $0) } }
+            }
 
             if let ms = mixes?.mixes, !ms.isEmpty {
                 H2("Mixes").padding(.top, -6)
-                HRow(height: 150) {
+                HRow(height: 150, pad: 28) {
                     ForEach(ms, id: \.name) { m in
                         MixTile(name: m.name, count: m.count, covers: (m.covers ?? []).compactMap { cid in
                             mixById[cid.replacingOccurrences(of: "-", with: "").lowercased()].flatMap { Pic.poster($0, h: 200) }
@@ -361,32 +436,17 @@ struct MusicScreen: View {
                 }
             }
 
-            HStack(spacing: 0) {
-                Text("Songs").font(.q(20)).foregroundStyle(Color.pink).shadow(color: .black, radius: 4, y: 1)
-                if total > 0 { Text("  \(NumberFormatter.localizedString(from: NSNumber(value: total), number: .decimal))").font(.q(14)).foregroundStyle(Color.dimText) }
-            }
-            .padding(.top, 30).padding(.leading, 16)
-            TextField("", text: $q, prompt: Text("Search songs, artists, albums").foregroundStyle(Color(hex: 0x6f6262)))
-                .font(.q(16)).foregroundStyle(Color.pink).textInputAutocapitalization(.never).autocorrectionDisabled()
-                .padding(.horizontal, 18).frame(height: 42).background(Color.surfaceHi, in: Capsule())
-                .padding(.horizontal, 16).padding(.top, 10)
-            Pager(cur: min(pageNo, pages), total: pages) { pageNo = $0 }
-            Color.clear.frame(height: 16)
-            if list.isEmpty {
-                if loadingList { Note("Loading songs…") } else if !listErr.isEmpty { Note(listErr, error: true) }
-                else { Text(q.isEmpty ? "No songs yet" : "Nothing with “\(q)”").font(.q(16)).foregroundStyle(Color.dimText).frame(maxWidth: .infinity).padding(.top, 30) }
+            H2("Recently downloaded").padding(.top, -6)
+            if downloads.isEmpty {
+                if loadedOnce { Note("Nothing downloaded yet.") }
             } else {
-                LazyVStack(spacing: 0) {
-                    ForEach(Array(list.enumerated()), id: \.element.id) { i, s in
-                        SongRow(it: s, index: (pageNo - 1) * PAGE + i, onPlay: { _ in playFromList(i) })
-                    }
+                RowColumns(songs: downloads, colW: width - 56) { idx in
+                    pm.play(downloads, at: idx, more: { await Api.randomSongs(50) })
                 }
+                .padding(.top, 20)
             }
-            if pages > 1 { Pager(cur: min(pageNo, pages), total: pages) { pageNo = $0 } }
         }
         .task { await loadTop() }
-        .task(id: "\(pageNo)|\(q)") { await loadList() }
-        .onChange(of: q) { _, _ in pageNo = 1 }
     }
 
     // MARK: data
@@ -396,40 +456,19 @@ struct MusicScreen: View {
         async let fa = try? Api.items(["IncludeItemTypes": "MusicAlbum", "Recursive": true, "Filters": "IsFavorite", "SortBy": "SortName", "Limit": 60])
         async let r = Api.recentAlbums()
         async let m = Plugin.mixes()
-        async let qk = Api.randomSongs(max(3, Int(floor((UIScreen.main.bounds.width - 18 + 10) / 94))) * 3)
+        async let qk = Api.randomSongs(24)
+        async let dl = try? Api.songs(["SortBy": "DateCreated", "SortOrder": "Descending", "Limit": 25])
         if let p = await p { playlists = p; Mem.set("m.pl", p) }
         if let fa = await fa { favAlbums = fa; Mem.set("m.fa", fa) }
         recent = await r; Mem.set("m.recent", recent)
         mixes = await m; if let mixes { Mem.set("m.mixes", mixes) }
         quick = await qk
+        if let dl = await dl { downloads = dl.items }
+        loadedOnce = true
     }
 
     private func refresh() async {
         await loadTop()
-        await loadList()
-    }
-
-    private func loadList() async {
-        loadingList = true
-        defer { loadingList = false }
-        do {
-            let term = q.trimmingCharacters(in: .whitespaces)
-            if !term.isEmpty { try? await Task.sleep(nanoseconds: 300_000_000); if Task.isCancelled { return } }
-            let r = try await Api.songs(["StartIndex": (pageNo - 1) * PAGE, "Limit": PAGE, "SortBy": "SortName", "SortOrder": "Ascending", "searchTerm": term.isEmpty ? nil : term])
-            total = r.totalRecordCount ?? r.items.count
-            list = r.items
-            listErr = ""
-        } catch { if !Task.isCancelled { listErr = error.localizedDescription } }
-    }
-
-    private func playFromList(_ i: Int) {
-        var offset = (pageNo - 1) * PAGE + list.count
-        let term = q.trimmingCharacters(in: .whitespaces)
-        pm.play(list, at: i, more: {
-            let r = (try? await Api.songs(["StartIndex": offset, "Limit": PAGE, "SortBy": "SortName", "searchTerm": term.isEmpty ? nil : term]))?.items ?? []
-            offset += r.count
-            return r
-        })
     }
 
     private func say(_ t: String) {
@@ -498,9 +537,7 @@ struct ListScreen: View {
 
     var body: some View {
         let width = UIScreen.main.bounds.width
-        let artW = kind == .artist ? min(220, width - 32) : width - 32
-        let total = songs.reduce(Int64(0)) { $0 + ($1.runTimeTicks ?? 0) }
-        let none = songs.isEmpty
+        let artW = kind == .artist ? min(220, width - 32) : width * 0.7
         let isFav = fav ?? (head?.userData?.isFavorite ?? false)
         let canFav = head != nil && id != "favourites" && !id.hasPrefix("mix-")
 
@@ -520,19 +557,21 @@ struct ListScreen: View {
                     .clipShape(RoundedRectangle(cornerRadius: kind == .artist ? artW / 2 : 12, style: .continuous))
                     .frame(maxWidth: .infinity)
                     Text(head.title).font(.q(28)).foregroundStyle(Color.pink).shadow(color: .black, radius: 4, y: 1).lineLimit(3)
-                        .multilineTextAlignment(kind == .artist ? .center : .leading).frame(maxWidth: .infinity, alignment: kind == .artist ? .center : .leading).padding(.top, 16)
-                    Text(sub(head, total: total)).font(.q(14)).foregroundStyle(Color.dimText).padding(.top, 2)
-                        .frame(maxWidth: .infinity, alignment: kind == .artist ? .center : .leading)
-                    VStack(spacing: 10) {
-                        Button { pm.play(songs, at: 0) } label: {
-                            HStack(spacing: 8) { Icon(name: "play", size: 20, color: .bg); Text("Play").font(.q(16)).foregroundStyle(Color.bg) }
-                                .frame(maxWidth: .infinity).frame(height: 44).background(Color.pink, in: Capsule())
-                        }.buttonStyle(PressStyle()).disabled(none).opacity(none ? 0.55 : 1)
-                        ActionRow(items: [
-                            Act(id: "queue", icon: "queueAdd", label: "Add all to queue", disabled: none, action: { songs.forEach { pm.enqueueLast($0) } }),
-                            Act(id: "pl", icon: "queue", label: "Add all to playlist", disabled: none, menu: AnyView(AddToPlaylistMenu(ids: songs.map { $0.id }) { Color.clear.frame(maxWidth: .infinity, minHeight: 44) })),
-                        ] + (canFav && kind == .album ? [Act(id: "fav", icon: "heart", label: "Favourite", action: { toggleFav(head, isFav) })] : []))
-                    }.padding(.top, 14)
+                        .multilineTextAlignment(kind == .artist ? .center : .leading).frame(maxWidth: .infinity, alignment: kind == .artist ? .center : .leading).padding(.top, 14)
+                    if kind == .artist {
+                        VStack(spacing: 10) {
+                            playButton
+                            ActionRow(items: [
+                                Act(id: "queue", icon: "queueAdd", label: "Add all to queue", disabled: songs.isEmpty, action: { songs.forEach { pm.enqueueLast($0) } }),
+                                Act(id: "pl", icon: "queue", label: "Add all to playlist", disabled: songs.isEmpty, menu: AnyView(AddToPlaylistMenu(ids: songs.map { $0.id }) { Color.clear.frame(maxWidth: .infinity, minHeight: 44) })),
+                            ])
+                        }.padding(.top, 14)
+                    } else {
+                        HStack(spacing: 10) {
+                            playButton
+                            ListMenu(songs: songs, favOn: canFav && kind == .album ? isFav : nil, onFav: { toggleFav(head, isFav) })
+                        }.padding(.top, 12)
+                    }
                 }
                 .padding(.horizontal, 16).padding(.top, 84 + 32 + 14)
             }
@@ -548,7 +587,7 @@ struct ListScreen: View {
             } else {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(songs.enumerated()), id: \.offset) { i, s in
-                        SongRow(it: s, index: i, showArt: kind != .album, showIndex: kind == .album) { pm.play(songs, at: $0) }
+                        SongRow(it: s, index: i, showArt: true, showIndex: false) { pm.play(songs, at: $0) }
                     }
                 }
             }
@@ -556,13 +595,12 @@ struct ListScreen: View {
         .task { await load() }
     }
 
-    private func sub(_ head: Item, total: Int64) -> String {
-        if kind == .artist { return "\(albums.count) albums · \(songs.count) songs" }
-        var parts: [String] = [kind == .album ? (head.albumArtist ?? "") : "Playlist"]
-        if let y = head.productionYear { parts.append(String(y)) }
-        parts.append("\(songs.count) songs")
-        if total > 0 { parts.append("\(Int((Double(total) / 6e8).rounded())) min") }
-        return parts.filter { !$0.isEmpty }.joined(separator: " · ")
+    private var playButton: some View {
+        Button { pm.play(songs, at: 0) } label: {
+            HStack(spacing: 8) { Icon(name: "play", size: 20, color: .bg); Text("Play").font(.q(16)).foregroundStyle(Color.bg) }
+                .frame(maxWidth: .infinity).frame(height: 44).background(Color.pink, in: Capsule())
+        }
+        .buttonStyle(PressStyle()).disabled(songs.isEmpty).opacity(songs.isEmpty ? 0.55 : 1)
     }
 
     private func toggleFav(_ h: Item, _ cur: Bool) {

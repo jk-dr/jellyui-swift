@@ -93,6 +93,73 @@ enum LibKind { case movies, shows
     var title: String { self == .movies ? "Movies" : "TV Shows" }
 }
 
+/// The web's phone grid: three across, 28 pt at the sides, 12 between (--pw).
+private func browseCell() -> CGFloat { floor((UIScreen.main.bounds.width - 56 - 24) / 3) }
+
+/// A section heading at the web's phone insets: 20 pt pink, 28 pt in.
+private struct SectionHead: View {
+    let text: String
+    let top: CGFloat
+    var body: some View {
+        Text(text).font(.q(20)).foregroundStyle(Color.pink)
+            .shadow(color: .black, radius: 4, y: 1)
+            .padding(.leading, 28).padding(.top, top)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// The web's empty line: 18 pt grey, centred, 30 pt below the heading above it.
+private func browseEmpty(_ t: String) -> some View {
+    Text(t).font(.q(18)).foregroundStyle(Color.dimText).multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity).padding(.top, 30)
+}
+
+/// A row of posters (the web's .row on a phone): starts 28 pt in, 12 apart, 6 pt above and below.
+private struct PosterRow<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(alignment: .top, spacing: 12) { content() }.padding(6)
+        }
+        .frame(height: 327)
+        .padding(.leading, 22).padding(.top, 6)
+    }
+}
+
+/// Posters three across at the web's phone insets (28 pt at the sides, 12 between).
+private func posterGrid<Content: View>(width w: CGFloat, @ViewBuilder _ content: () -> Content) -> some View {
+    LazyVGrid(columns: Array(repeating: GridItem(.fixed(w), spacing: 12), count: 3), spacing: 12) { content() }
+        .padding(.horizontal, 28)
+}
+
+/// A poster with the web's 12 pt corners; the type badge shows only in the All view.
+private struct BrowsePoster: View {
+    let card: Card
+    let width: CGFloat
+    var badge = false
+    @Environment(Nav.self) private var nav
+    var body: some View {
+        Button { nav.go(card.route) } label: {
+            ZStack(alignment: .topTrailing) {
+                if card.img != nil { Pic_(card.img, radius: 12) } else { placeholder }
+                if badge { TypeBadge(t: card.t) }
+            }
+            .frame(width: width, height: width * 1.5)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(PressStyle())
+    }
+    private var placeholder: some View {
+        ZStack {
+            LinearGradient(colors: [Color(hex: 0x1d1d20), Color(hex: 0x111113)], startPoint: .top, endPoint: .bottom)
+            VStack(spacing: 6) {
+                Text(String(card.title.trimmingCharacters(in: .whitespaces).prefix(1)).uppercased()).font(.q(42)).foregroundStyle(Color.pink)
+                Text(card.title).font(.q(12)).foregroundStyle(Color(hex: 0xd4d4d4)).multilineTextAlignment(.center).lineLimit(3)
+            }.padding(8)
+        }
+    }
+}
+
 /// Movies / TV Shows: title, Recommended, Recently Added, then A-Z search and the whole library in pages.
 struct LibraryListScreen: View {
     let kind: LibKind
@@ -121,18 +188,18 @@ struct LibraryListScreen: View {
         let pages = max(1, Int(ceil(Double(list.count) / Double(PAGE))))
         let cur = min(pageNo, pages)
         let slice = Array(list.dropFirst((cur - 1) * PAGE).prefix(PAGE))
-        let w = Grid3.width(UIScreen.main.bounds.width)
+        let w = browseCell()
         let curLetter = q.count == 1 ? q.uppercased() : ""
 
         Page(refresh: { await load(force: true) }) {
             PageTitle(text: kind.title)
-            H2("Recommended").padding(.top, 0)
-            cardRow(rec, loading: !loaded)
-            H2("Recently Added").padding(.top, -2)
-            cardRow(recent, loading: !loaded)
+            SectionHead(text: "Recommended", top: 36)
+            cardRow(rec, loading: !loaded, skeletons: 5)
+            SectionHead(text: "Recently Added", top: 34)
+            cardRow(recent, loading: !loaded, skeletons: 8)
 
             (Text("Search").font(.q(20)).foregroundStyle(Color.pink) + (q.isEmpty ? Text("") : Text("  “\(q)”").font(.q(20)).foregroundStyle(Color.dimText)))
-                .shadow(color: .black, radius: 4, y: 1).padding(.top, 100).padding(.leading, 16)
+                .shadow(color: .black, radius: 4, y: 1).padding(.top, 100).padding(.leading, 28)
             FlowLetters(letters: letters, current: curLetter) { l in
                 q = (q.count == 1 && q.uppercased() == l) ? "" : l.lowercased()
                 pageNo = 1
@@ -141,26 +208,21 @@ struct LibraryListScreen: View {
             Color.clear.frame(height: 12)
             if slice.isEmpty {
                 if !loaded {
-                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(w), spacing: 12), count: 3), spacing: 12) {
-                        ForEach(0..<9, id: \.self) { _ in Skeleton(width: w, height: w * 1.5, radius: 10) }
-                    }.padding(.horizontal, 16)
+                    posterGrid(width: w) { ForEach(0..<5, id: \.self) { _ in Skeleton(width: w, height: w * 1.5, radius: 12) } }
                 } else {
-                    Text(q.isEmpty ? "Nothing here yet" : "Nothing with “\(q)”").font(.q(16)).foregroundStyle(Color.dimText).frame(maxWidth: .infinity).padding(.top, 30)
+                    browseEmpty(q.isEmpty ? "Nothing here yet" : "Nothing with “\(q)”")
                 }
             } else {
-                LazyVGrid(columns: Array(repeating: GridItem(.fixed(w), spacing: 12), count: 3), spacing: 12) {
-                    ForEach(slice.map { $0.card }) { PosterCard(card: $0, width: w) }
-                }.padding(.horizontal, 16)
+                posterGrid(width: w) { ForEach(slice.map { $0.card }) { BrowsePoster(card: $0, width: w) } }
             }
-            if pages > 1 { Pager(cur: cur, total: pages) { pageNo = $0 } }
         }
         .task { await load(force: false) }
     }
 
-    @ViewBuilder private func cardRow(_ items: [Item], loading: Bool) -> some View {
-        if items.isEmpty && loading { HRowSkeleton(height: 315, width: 210) }
-        else if items.isEmpty { Text("Nothing here yet").font(.q(16)).foregroundStyle(Color.dimText).frame(maxWidth: .infinity).padding(.top, 30) }
-        else { HRow(height: 315) { ForEach(items.map { $0.card }) { PosterCard(card: $0, width: 210) } } }
+    @ViewBuilder private func cardRow(_ items: [Item], loading: Bool, skeletons: Int) -> some View {
+        if items.isEmpty && loading { PosterRow { ForEach(0..<skeletons, id: \.self) { _ in Skeleton(width: 210, height: 315, radius: 12) } } }
+        else if items.isEmpty { browseEmpty("Nothing here yet") }
+        else { PosterRow { ForEach(items.map { $0.card }) { BrowsePoster(card: $0, width: 210) } } }
     }
 
     private func load(force: Bool) async {
@@ -196,7 +258,7 @@ struct FlowLetters: View {
                 }.buttonStyle(.plain)
             }
         }
-        .padding(.top, 12).padding(.horizontal, 16)
+        .padding(.top, 12).padding(.leading, 28).padding(.trailing, 28)
     }
 }
 
@@ -242,14 +304,14 @@ struct CollectionScreen: View {
     @State private var busy = false
 
     var body: some View {
-        let w = Grid3.width(UIScreen.main.bounds.width)
+        let w = browseCell()
         let sel = tiles.filter { mode == "all" || $0.t == mode }
         let counts = (all: tiles.count, s: tiles.filter { $0.t == "s" }.count, m: tiles.filter { $0.t == "m" }.count)
         let n = mode == "all" ? counts.all : (mode == "s" ? counts.s : counts.m)
         let logoURL = Pic.tmdb(logo, logoKind == "provider" ? "w154" : "w300")
 
         Page {
-            HStack(spacing: 14) {
+            HStack(alignment: logoURL == nil ? .firstTextBaseline : .center, spacing: 14) {
                 if let logoURL {
                     Pic_(logoURL, radius: 12, fit: logoKind == "provider" ? .fill : .fit).padding(logoKind == "provider" ? 0 : 8).frame(width: logoKind == "provider" ? 64 : 110, height: 64)
                         .background(Color.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -259,27 +321,27 @@ struct CollectionScreen: View {
                 Text("\(n) \(n == 1 ? "title" : "titles")\(finished ? "" : "+")").font(.q(14)).foregroundStyle(Color.dimText)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 16).padding(.top, 84 + 32 + 14)
+            .padding(.horizontal, 28).padding(.top, 66)
             SegmentedBar(options: [("all", "All", counts.all), ("s", "Shows", counts.s), ("m", "Movies", counts.m)], value: $mode, top: 18)
-            Color.clear.frame(height: 14)
+                .padding(.leading, 12)
+            Color.clear.frame(height: 12)
             if let e = errorText, tiles.isEmpty {
-                Note(e, error: true)
+                Text(e).font(.q(18)).foregroundStyle(Color.dimText).padding(.top, 30).padding(.horizontal, 28)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             } else if sel.isEmpty {
                 if loading {
-                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(w), spacing: 12), count: 3), spacing: 12) {
-                        ForEach(0..<9, id: \.self) { _ in Skeleton(width: w, height: w * 1.5) }
-                    }.padding(.horizontal, 16)
+                    posterGrid(width: w) { ForEach(0..<10, id: \.self) { _ in Skeleton(width: w, height: w * 1.5, radius: 12) } }
                 } else {
-                    Text("Nothing here").font(.q(16)).foregroundStyle(Color.dimText).frame(maxWidth: .infinity).padding(.top, 30)
+                    browseEmpty("Nothing here")
                 }
             } else {
-                LazyVGrid(columns: Array(repeating: GridItem(.fixed(w), spacing: 12), count: 3), spacing: 12) {
+                posterGrid(width: w) {
                     ForEach(sel) { t in
-                        PosterCard(card: t.card, width: w, badge: mode == "all")
+                        BrowsePoster(card: t.card, width: w, badge: mode == "all")
                             .onAppear { if t.id == sel.last?.id { Task { await more() } } }
                     }
-                }.padding(.horizontal, 16)
-                if !finished { ProgressView().tint(Color.dimText).frame(maxWidth: .infinity).padding(24) }
+                }
+                if !finished { Text("Loading more…").font(.q(15)).foregroundStyle(Color.dimText).padding(.top, 12).padding(.horizontal, 28) }
             }
         }
         .task { if tiles.isEmpty { await load() } }

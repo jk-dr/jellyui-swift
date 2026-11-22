@@ -235,7 +235,7 @@ struct Btn: View {
         Button(action: action) { content }
             .buttonStyle(PressStyle())
             .disabled(disabled || busy)
-            .opacity(disabled ? 0.45 : 1)
+            .opacity(disabled ? 0.55 : 1)
     }
     var content: some View {
         let fg: Color = kind == .primary ? .bg : (kind == .danger ? Color(hex: 0x2a0a0a) : .pink)
@@ -309,7 +309,7 @@ struct ActionRow: View {
                 }
                 .frame(width: small ? 44 : nil)
                 .frame(maxWidth: small ? 44 : .infinity)
-                .opacity(x.disabled ? 0.45 : 1)
+                .opacity(x.disabled ? 0.55 : 1)
             }
         }
         .background(GeometryReader { g in Color.clear.onAppear { width = g.size.width }.onChange(of: g.size.width) { _, w in width = w } })

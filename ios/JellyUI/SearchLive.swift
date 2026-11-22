@@ -3,9 +3,11 @@ import SwiftUI
 // MARK: - Search
 
 private struct SearchResults {
-    var movies: [Item] = [], shows: [Item] = [], albums: [Item] = [], songs: [Item] = [], playlists: [Item] = []
-    var total: Int { movies.count + shows.count + albums.count + songs.count + playlists.count }
+    var movies: [Item] = [], shows: [Item] = [], artists: [Item] = [], albums: [Item] = [], songs: [Item] = [], playlists: [Item] = []
+    var total: Int { movies.count + shows.count + artists.count + albums.count + songs.count + playlists.count }
 }
+
+private let clockPath = "M13 3a9 9 0 0 0-9 9H1l3.89 3.89.07.14L9 12H6a7 7 0 1 1 2.05 4.95l-1.41 1.41A9 9 0 1 0 13 3zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"
 
 /// The web's search: the pill stays where the header's was and narrows to make room for Cancel; the results fade in.
 struct SearchScreen: View {
@@ -17,10 +19,15 @@ struct SearchScreen: View {
     @State private var error = ""
     @State private var dym = ""
     @State private var recent: [String] = UserDefaults.standard.stringArray(forKey: "recentSearches") ?? []
+    @State private var recAll = false
+    @State private var expanded: Set<String> = []
     @State private var open: CGFloat = 0
     @FocusState private var focused: Bool
 
     private var term: String { q.trimmingCharacters(in: .whitespaces) }
+    /// how many of each group are listed before "Show N more" (the web: 2 on a phone, 4 on a larger screen)
+    private var per: Int { UIScreen.main.bounds.width > 700 ? 4 : 2 }
+    private var recentCap: Int { UIScreen.main.bounds.width > 700 ? 8 : 4 }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -32,27 +39,25 @@ struct SearchScreen: View {
                             .stroke(Color(hex: 0x3e2222), style: StrokeStyle(lineWidth: 2.6, lineCap: .round)).frame(width: 22, height: 22)
                             .frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 13)
                         TextField("", text: $q, prompt: Text("What do you want to watch?").foregroundStyle(Color(hex: 0x8a5a5a)))
-                            .font(.q(16)).foregroundStyle(Color.pink).multilineTextAlignment(.center)
+                            .font(.q(16)).foregroundStyle(focused ? Color(hex: 0xd4d4d4) : Color(hex: 0x6f6262)).multilineTextAlignment(.center)
                             .textInputAutocapitalization(.never).autocorrectionDisabled().submitLabel(.search)
                             .focused($focused).padding(.horizontal, 44)
                             .onSubmit { remember(); focused = false }
                     }
                     .frame(height: 48)
                     .background(Color(hex: 0x1a1a1c), in: Capsule())
-                    .overlay(Capsule().stroke(Color(hex: 0x2a2a2d), lineWidth: 1))
-                    .padding(.trailing, open * 68)
+                    .overlay(Capsule().stroke(focused ? Color(hex: 0xe6e6e6) : Color(hex: 0x2a2a2d), lineWidth: focused ? 2 : 1))
+                    .padding(.trailing, open * 78)
                 }
                 .overlay(alignment: .trailing) {
-                    Button { cancel() } label: { Text("Cancel").font(.q(15)).foregroundStyle(Color.pink).frame(width: 56, height: 48, alignment: .trailing) }
+                    Button { cancel() } label: { Text("Cancel").font(.q(16)).foregroundStyle(Color.pink).frame(width: 70, height: 48, alignment: .trailing) }
                         .buttonStyle(.plain).opacity(Double(open)).offset(x: (1 - open) * 28)
                 }
-                .padding(.horizontal, 16).padding(.top, 10 + Insets.top).padding(.bottom, 12)
+                .padding(.horizontal, 16).padding(.top, 10 + Insets.top).padding(.bottom, 4)
 
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 0) { results }
-                        .padding(.vertical, 8).padding(.horizontal, 6)
-                        .background(Color(hex: 0x121214), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .padding(.horizontal, 8)
+                        .padding(.horizontal, 14).padding(.top, 6)
                     Color.clear.frame(height: 120)
                 }
                 .scrollDismissesKeyboard(.immediately)
@@ -60,6 +65,7 @@ struct SearchScreen: View {
             }
         }
         .task(id: q) { await runSearch() }
+        .onChange(of: q) { _, _ in expanded = [] }
         .onAppear {
             withAnimation(.timingCurve(0.22, 0.61, 0.36, 1, duration: 0.38)) { open = 1 }
             DispatchQueue.main.async { focused = true }
@@ -68,38 +74,35 @@ struct SearchScreen: View {
 
     @ViewBuilder private var results: some View {
         if term.isEmpty {
-            if recent.isEmpty { Text("Search your library").font(.q(15)).foregroundStyle(Color.dimText).frame(maxWidth: .infinity).padding(12) }
-            else {
+            if !recent.isEmpty {
                 h3("Recent searches")
-                ForEach(recent, id: \.self) { r in
+                let shown = recAll ? recent : Array(recent.prefix(recentCap))
+                ForEach(shown, id: \.self) { r in
                     HStack(spacing: 12) {
-                        Icon(name: "search", size: 18, color: Color.dimText).frame(width: 38, height: 38).background(Color.surfaceHi, in: RoundedRectangle(cornerRadius: 8))
+                        SVGPath(d: clockPath).fill(Color.dimText).frame(width: 18, height: 18)
+                            .frame(width: 38, height: 38).background(Color.surfaceHi, in: RoundedRectangle(cornerRadius: 8))
                         Text(r).font(.q(16)).foregroundStyle(Color(hex: 0xd4d4d4)).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                         Button { recent.removeAll { $0 == r }; UserDefaults.standard.set(recent, forKey: "recentSearches") } label: { Icon(name: "close", size: 18, color: Color.dimText).padding(10) }.buttonStyle(.plain)
                     }
                     .padding(.vertical, 6).padding(.horizontal, 8).contentShape(Rectangle())
                     .onTapGesture { q = r }
                 }
+                if !recAll && recent.count > shown.count { moreRow("Show more") { recAll = true } }
+                moreRow("Clear recent searches") { recent = []; UserDefaults.standard.set(recent, forKey: "recentSearches") }
             }
         } else {
             if loading && res.total == 0 { ProgressView().tint(Color.dimText).frame(maxWidth: .infinity).padding(24) }
             if !error.isEmpty { Text(error).font(.q(15)).foregroundStyle(Color.danger).frame(maxWidth: .infinity).padding(12) }
             if !loading && res.total == 0 && error.isEmpty {
-                Text("Nothing for “\(term)”").font(.q(15)).foregroundStyle(Color.dimText).frame(maxWidth: .infinity).padding(12)
-                if !dym.isEmpty {
-                    Button { q = dym } label: { (Text("Did you mean ").foregroundStyle(Color.dimText) + Text(dym).foregroundStyle(Color.pink) + Text("?").foregroundStyle(Color.dimText)).font(.q(15)).frame(maxWidth: .infinity) }.buttonStyle(.plain)
-                }
+                if !dym.isEmpty { dymRow }
+                else { Text("No results for “\(term)”").font(.q(15)).foregroundStyle(Color.dimText).frame(maxWidth: .infinity).padding(12) }
             }
-            group("Movies", res.movies) { m in row(m, "Movie" + yr(m)) { go(.movie(m.id)) } }
             group("TV Shows", res.shows) { m in row(m, "Show" + yr(m)) { go(.show(m.id)) } }
+            group("Movies", res.movies) { m in row(m, "Movie" + yr(m)) { go(.movie(m.id)) } }
+            group("Artists", res.artists) { a in row(a, "Artist", round: true) { go(.artist(a.id)) } }
+            songGroup
             group("Albums", res.albums) { m in row(m, m.albumArtist ?? "Album") { go(.album(m.id)) } }
             group("Playlists", res.playlists) { m in row(m, "Playlist") { go(.playlist(m.id)) } }
-            if !res.songs.isEmpty {
-                h3("Songs")
-                ForEach(Array(res.songs.enumerated()), id: \.element.id) { i, s in
-                    row(s, s.artistLine.isEmpty ? "Song" : s.artistLine) { remember(); pm.play(res.songs, at: i) }
-                }
-            }
         }
     }
 
@@ -107,17 +110,58 @@ struct SearchScreen: View {
     private func h3(_ t: String) -> some View {
         Text(t.uppercased()).font(.q(11)).tracking(1.54).foregroundStyle(Color.dimText).padding(.top, 8).padding(.horizontal, 10).padding(.bottom, 4)
     }
+
     @ViewBuilder private func group<V: View>(_ title: String, _ items: [Item], _ build: @escaping (Item) -> V) -> some View {
-        if !items.isEmpty { h3(title); ForEach(items) { build($0) } }
+        if !items.isEmpty {
+            let n = expanded.contains(title) ? min(items.count, 40) : min(items.count, per)
+            h3(title)
+            ForEach(items.prefix(n)) { build($0) }
+            if items.count > n { moreRow("Show \(items.count - n) more") { _ = expanded.insert(title) } }
+        }
     }
 
-    /// one prediction row: a small picture, the name with what was typed picked out, and a line under it
-    private func row(_ it: Item, _ sub: String, _ tap: @escaping () -> Void) -> some View {
+    @ViewBuilder private var songGroup: some View {
+        if !res.songs.isEmpty {
+            let n = expanded.contains("Songs") ? min(res.songs.count, 40) : min(res.songs.count, per)
+            h3("Songs")
+            ForEach(Array(res.songs.prefix(n).enumerated()), id: \.element.id) { i, s in
+                row(s, s.artistLine.isEmpty ? "Song" : s.artistLine) { remember(); pm.play(res.songs, at: i) }
+            }
+            if res.songs.count > n { moreRow("Show \(res.songs.count - n) more") { _ = expanded.insert("Songs") } }
+        }
+    }
+
+    /// the web's "Show N more" row: full width, dark, pink words
+    private func moreRow(_ t: String, _ tap: @escaping () -> Void) -> some View {
+        Button(action: tap) {
+            Text(t).font(.q(13)).foregroundStyle(Color.pink).frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 7).padding(.horizontal, 14)
+                .background(Color.surfaceHi, in: RoundedRectangle(cornerRadius: 10))
+                .padding(.vertical, 4).contentShape(Rectangle())
+        }.buttonStyle(PressStyle())
+    }
+
+    /// "Did you mean": the library name closest to what was typed
+    private var dymRow: some View {
+        Button { q = dym } label: {
+            HStack(spacing: 12) {
+                Text("?").font(.q(16)).foregroundStyle(Color.bg).frame(width: 38, height: 38).background(Color.pink, in: RoundedRectangle(cornerRadius: 8))
+                Text("Did you mean “\(dym)”?").font(.q(16)).foregroundStyle(Color.pink).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.vertical, 6).padding(.horizontal, 8)
+            .background(Color.surfaceHi, in: RoundedRectangle(cornerRadius: 12))
+            .contentShape(Rectangle())
+        }.buttonStyle(PressStyle())
+    }
+
+    /// one prediction row: a small picture (round for an artist), the name with what was typed picked out, and a line under it
+    private func row(_ it: Item, _ sub: String, round: Bool = false, _ tap: @escaping () -> Void) -> some View {
         Button { remember(); tap() } label: {
             HStack(spacing: 12) {
                 Group {
-                    if let u = Pic.poster(it, h: 100) { Pic_(u, radius: 8) } else { Color.surfaceHi.overlay(Text(String(it.title.prefix(1))).font(.q(16)).foregroundStyle(Color.pink)) }
-                }.frame(width: 38, height: 38).clipShape(RoundedRectangle(cornerRadius: 8))
+                    if let u = Pic.poster(it, h: 100) { Pic_(u, radius: round ? 19 : 8) } else { Color.surfaceHi.overlay(Text(String(it.title.prefix(1))).font(.q(16)).foregroundStyle(Color.pink)) }
+                }
+                .frame(width: 38, height: 38).clipShape(RoundedRectangle(cornerRadius: round ? 19 : 8, style: .continuous))
                 VStack(alignment: .leading, spacing: 0) {
                     mark(it.title)
                     Text(sub).font(.q(12)).foregroundStyle(Color.dimText).lineLimit(1)
@@ -164,10 +208,10 @@ struct SearchScreen: View {
         if Task.isCancelled { return }
         defer { if !Task.isCancelled { loading = false } }
         do {
-            let r = try await Api.items(["searchTerm": term, "IncludeItemTypes": "Movie,Series,MusicAlbum,Audio,Playlist", "Recursive": true, "Limit": 60, "Fields": "ProviderIds,AlbumArtist,RunTimeTicks", "EnableImageTypes": "Primary,Backdrop", "ImageTypeLimit": 1])
+            let r = try await Api.items(["searchTerm": term, "IncludeItemTypes": "Movie,Series,MusicArtist,MusicAlbum,Audio,Playlist", "Recursive": true, "Limit": 60, "Fields": "ProviderIds,AlbumArtist,RunTimeTicks", "EnableImageTypes": "Primary,Backdrop", "ImageTypeLimit": 1])
             if Task.isCancelled { return }
             func by(_ t: String) -> [Item] { r.filter { $0.type == t } }
-            res = SearchResults(movies: by("Movie"), shows: by("Series"), albums: by("MusicAlbum"), songs: by("Audio"), playlists: by("Playlist"))
+            res = SearchResults(movies: by("Movie"), shows: by("Series"), artists: by("MusicArtist"), albums: by("MusicAlbum"), songs: by("Audio"), playlists: by("Playlist"))
             error = ""; dym = ""
             if res.total == 0 {
                 struct Sug: Decodable { var suggestion: String? }
@@ -209,17 +253,18 @@ struct ChannelCard: View {
                     ZStack(alignment: .topLeading) {
                         LinearGradient(colors: [Color(hex: 0x222228), Color(hex: 0x121216)], startPoint: .topLeading, endPoint: .bottomTrailing)
                         Text(c.number ?? "").font(.q(46)).foregroundStyle(Color(hex: 0x31313a)).frame(maxWidth: .infinity, maxHeight: .infinity)
-                        Text("LIVE").font(.q(10)).tracking(1.2).foregroundStyle(.white).padding(.horizontal, 6)
-                            .background(Color(hex: 0xe0344a), in: RoundedRectangle(cornerRadius: 3.6)).padding(8)
+                        Text("LIVE").font(.q(10)).tracking(1.2).foregroundStyle(.white).padding(.horizontal, 6).frame(height: 15)
+                            .background(Color(hex: 0xe0344a), in: RoundedRectangle(cornerRadius: 6)).padding(8)
                     }.frame(height: 106)
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(c.title).font(.q(15)).foregroundStyle(Color(hex: 0xf2f2f2)).lineLimit(1)
+                        Text(c.title).font(.q(15)).foregroundStyle(Color(hex: 0xf2f2f2))
                         Text(np).font(.q(13)).foregroundStyle(Color.midText).lineLimit(1)
-                        Text(range).font(.q(11)).foregroundStyle(Color.dimText).frame(minHeight: 16)
+                        if !range.isEmpty { Text(range).font(.q(11)).foregroundStyle(Color.dimText) }
                         ZStack(alignment: .leading) {
                             Capsule().fill(Color.white.opacity(0.15))
-                            GeometryReader { g in Capsule().fill(Color.pink).frame(width: g.size.width * pct / 100) }
-                        }.frame(height: 3.6).padding(.top, 6)
+                            Rectangle().fill(Color.pink).scaleEffect(x: max(pct / 100, 0.001), anchor: .leading)
+                        }
+                        .frame(height: 6).clipShape(Capsule()).padding(.top, 10)
                     }
                     .padding(.top, 10).padding(.horizontal, 12).padding(.bottom, 12).frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -284,7 +329,7 @@ struct LiveScreen: View {
                     else { chRow(favList) }
                     if !recList.isEmpty { H2("Recently watched channels").padding(.top, -2); chRow(recList) }
                 }
-                H2(toks.isEmpty ? "All channels · \(chans.count)" : "Channels · \(list.count)").padding(.top, 34)
+                H2(toks.isEmpty ? "All channels · \(chans.count)" : "Channels · \(list.count)").padding(.top, -2)
                 Pager(cur: cur, total: pages) { pageNo = $0 }
                 WordFlowGrid(spacing: 12) {
                     ForEach(page) { c in ChannelCard(c: c, fav: isFav(c), onFav: toggle, onOpen: open) }

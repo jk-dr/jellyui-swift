@@ -84,12 +84,20 @@ struct DetailScreen: View {
 
     private var tmdbParam: String { id.hasPrefix("tmdb-") ? String(id.dropFirst(5)) : "" }
 
+    static func playLabel(_ ep: Item?) -> String {
+        guard let ep else { return "Play" }
+        let verb = (ep.userData?.playbackPositionTicks ?? 0) > 0 ? "Resume" : "Play"
+        let s = ep.parentIndexNumber.map { String($0) } ?? "?"
+        let e = ep.indexNumber.map { String($0) } ?? "?"
+        return "\(verb) S\(s) · E\(e)"
+    }
+
     var body: some View {
         let model: DModel? = item.map { fromJf($0, show: show) } ?? ((title != nil && title?.jellyfinId == nil) ? fromSeerr(title!, show: show) : nil)
         Page {
             if let m = model { content(m) }
-            else if let e = error { Note(e, error: true).padding(.top, 130) }
-            else { ProgressView().tint(Color.dimText).frame(maxWidth: .infinity).padding(.top, 200) }
+            else if let e = error { Note(e, error: true).padding(.horizontal, 12).padding(.top, 72) }
+            else { ProgressView().tint(Color.dimText).frame(maxWidth: .infinity).padding(.top, 120) }
         }
         .task(id: id) { if item == nil && title == nil { await load() } }
         .onChange(of: nav.play) { _, n in if n == nil && item != nil { Task { await load() } } }
@@ -105,42 +113,39 @@ struct DetailScreen: View {
     @ViewBuilder private func content(_ m: DModel) -> some View {
         let fav = favOverride ?? m.fav
         let asked = reqSent || m.status == 2 || m.status == 3 || m.status == 4
-        VStack(spacing: 16) {
-            // the phone page: room for the Back button, then a centred poster and the text under it
+        // the phone page: the search bar (with the Back button) sits above; a centred poster, then the text under it
+        VStack(spacing: 0) {
             Group {
                 if let p = m.poster { Pic_(p, radius: 10) } else {
                     Color(hex: 0x181818).overlay(Text(String(m.title.prefix(1))).font(.q(44)).foregroundStyle(Color(hex: 0x6a6a70)))
                 }
             }
             .frame(width: 150, height: 225).clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            VStack(spacing: 0) {
-                Text(m.title).font(.q(28)).foregroundStyle(Color.pink).multilineTextAlignment(.center).shadow(color: .black, radius: 4, y: 1)
-                    .frame(maxWidth: .infinity)
-                WrapCentered(spacing: 10) {
-                    if let y = m.year { Text(y).font(.q(14)).foregroundStyle(Color.midText) }
-                    if let r = m.runtime, !r.isEmpty { Text(show ? r : (Int(r).map(runtimeText) ?? r)).font(.q(14)).foregroundStyle(Color.midText) }
-                    if let a = m.age { Text(a).font(.q(12)).foregroundStyle(Color.midText).padding(.horizontal, 5).overlay(RoundedRectangle(cornerRadius: 3.6).stroke(Color(hex: 0x4a4a50), lineWidth: 1)) }
-                    if let s = m.score, s > 0 { Text("★ \(String(format: "%.1f", s))").font(.q(14)).foregroundStyle(Color.pink) }
-                    HStack(spacing: 5) {
-                        Icon(name: show ? "tv" : "reel", size: 14, color: Color(hex: 0xf2f2f2))
-                        Text(show ? "TV SHOW" : "MOVIE").font(.system(size: 11, weight: .bold)).tracking(0.9).foregroundStyle(Color(hex: 0xf2f2f2))
-                    }
-                    .padding(.horizontal, 8).padding(.vertical, 1).background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+            Text(m.title).font(.q(28)).foregroundStyle(Color.pink).multilineTextAlignment(.center).shadow(color: .black, radius: 4, y: 1)
+                .frame(maxWidth: .infinity).padding(.top, 16)
+            WrapCentered(spacing: 10) {
+                if let y = m.year { Text(y).font(.q(14)).foregroundStyle(Color.midText) }
+                if let r = m.runtime, !r.isEmpty { Text(show ? r : (Int(r).map(runtimeText) ?? r)).font(.q(14)).foregroundStyle(Color.midText) }
+                if let a = m.age { Text(a).font(.q(12)).foregroundStyle(Color.midText).padding(.horizontal, 5).overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(hex: 0x4a4a50), lineWidth: 1)) }
+                if let s = m.score, s > 0 { Text("★ \(String(format: "%.1f", s))").font(.q(14)).foregroundStyle(Color.pink) }
+                HStack(spacing: 5) {
+                    Icon(name: show ? "tv" : "reel", size: 14, color: Color(hex: 0xf2f2f2))
+                    Text(show ? "TV SHOW" : "MOVIE").font(.system(size: 11, weight: .bold)).tracking(0.9).foregroundStyle(Color(hex: 0xf2f2f2))
                 }
-                .padding(.top, 8)
-                if !m.genres.isEmpty { Text(m.genres.joined(separator: " · ")).font(.q(13)).foregroundStyle(Color.dimText).multilineTextAlignment(.center).padding(.top, 6) }
-                if let o = m.overview ?? m.tagline { Text(o).font(.q(15)).foregroundStyle(Color(hex: 0xd4d4d4)).lineSpacing(3).padding(.top, 14).frame(maxWidth: .infinity, alignment: .leading) }
-                if let d = m.director, !d.isEmpty {
-                    (Text("\(m.dirLabel) ").foregroundStyle(Color.dimText) + Text(d).foregroundStyle(Color.midText)).font(.q(13)).padding(.top, 10).frame(maxWidth: .infinity, alignment: .leading)
-                }
+                .padding(.horizontal, 8).padding(.vertical, 1).background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
             }
-            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            if !m.genres.isEmpty { Text(m.genres.joined(separator: " · ")).font(.q(13)).foregroundStyle(Color.dimText).multilineTextAlignment(.center).padding(.top, 8).frame(maxWidth: .infinity) }
+            if let o = m.overview ?? m.tagline { Text(o).font(.q(15)).foregroundStyle(Color(hex: 0xd4d4d4)).lineSpacing(4).padding(.top, 14).frame(maxWidth: .infinity, alignment: .leading) }
+            if let d = m.director, !d.isEmpty {
+                (Text("\(m.dirLabel) ").foregroundStyle(Color.dimText) + Text(d).foregroundStyle(Color.midText)).font(.q(13)).padding(.top, 16).frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
-        .padding(.top, 84 + 32 + 16)
+        .padding(.horizontal, 28).padding(.top, 72)
 
         VStack(alignment: .leading, spacing: 0) {
             if m.pct > 0 {
-                Text("\(m.left) min left").font(.q(14)).foregroundStyle(Color.dimText).padding(.top, 22)
+                Text("\(m.left) min left").font(.q(14)).foregroundStyle(Color.dimText).padding(.top, 18)
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.white.opacity(0.2))
                     GeometryReader { g in Capsule().fill(Color.pink).frame(width: g.size.width * min(1, m.pct / 100)) }
@@ -151,20 +156,21 @@ struct DetailScreen: View {
                 let extra = extras(m, fav: fav)
                 if !extra.isEmpty { ActionRow(items: extra) }
             }
-            .padding(.top, 14)
+            .padding(.top, 18)
             let hint = hintText(m, asked: asked)
             if !hint.isEmpty || !reqErr.isEmpty {
                 Text(reqErr.isEmpty ? hint : reqErr).font(.q(14)).foregroundStyle(reqErr.isEmpty ? Color(hex: 0xa9a9a9) : Color.danger).padding(.top, 10)
             }
         }
-        .padding(.horizontal, 16).padding(.top, 8)
+        .padding(.horizontal, 28)
 
         if show { SeasonsView(m: m) }
 
         if !m.cast.isEmpty || !(m.director ?? "").isEmpty {
             let crew: [CastPerson] = ((m.director ?? "").isEmpty ? [] : [CastPerson(name: String(m.director!.split(separator: ",").first ?? ""), role: m.dirLabel == "Created by" ? "Creator" : "Director", img: nil)]) + m.cast
-            H2("Cast & Crew")
-            HRow(height: 150) { ForEach(Array(crew.enumerated()), id: \.offset) { _, c in CastCard(c: c) } }
+            Text("Cast & Crew").font(.q(20)).foregroundStyle(Color.pink).shadow(color: .black, radius: 4, y: 1)
+                .padding(.leading, 28).padding(.top, 28).frame(maxWidth: .infinity, alignment: .leading)
+            HRow(height: 150, pad: 28) { ForEach(Array(crew.enumerated()), id: \.offset) { _, c in CastCard(c: c) } }
         }
     }
 
@@ -194,7 +200,7 @@ struct DetailScreen: View {
         if m.inLib, let jf = m.jf {
             if show {
                 let nu = next ?? first
-                let label = (nu?.userData?.playbackPositionTicks ?? 0) > 0 ? "Resume" : "Play"
+                let label = Self.playLabel(nu)
                 Btn(label: label, icon: "play", kind: .primary, disabled: nu == nil) { if let nu { nav.play = PlayRequest(itemId: nu.id) } }
             } else {
                 Btn(label: waiting ? "Wait for download" : (m.pct > 0 ? "Resume" : "Play"), icon: "play", kind: .primary) { nav.play = PlayRequest(itemId: jf) }
@@ -324,7 +330,7 @@ struct CastCard: View {
                     Color.surfaceHi.overlay(Text(String(c.name.prefix(1))).font(.q(26)).foregroundStyle(Color.pink))
                 }
             }
-            .frame(width: 64, height: 64).clipShape(Circle()).padding(.bottom, 5)
+            .frame(width: 64, height: 64).clipShape(Circle()).padding(.bottom, 10)
             Text(c.name).font(.q(12)).foregroundStyle(Color(hex: 0xd4d4d4)).multilineTextAlignment(.center).lineLimit(2)
             if let r = c.role { Text(r).font(.q(11)).foregroundStyle(Color.dimText).lineLimit(1) }
         }
@@ -366,28 +372,30 @@ struct SeasonsView: View {
                     Button { open = true } label: {
                         HStack(spacing: 4) {
                             Text(seasons.indices.contains(cur) ? seasons[cur].name : "").font(.q(15)).foregroundStyle(Color.pink)
-                            Icon(name: "chevronDown", size: 20, color: .white)
+                            Icon(name: "chevronDown", size: 20, color: .pink)
                         }
                         .padding(.leading, 16).padding(.trailing, 10).frame(height: 40)
                         .background(Color.surfaceHi, in: Capsule())
                     }.buttonStyle(.plain)
                     Text(loading ? "" : "\(eps.count) \(eps.count == 1 ? "episode" : "episodes")").font(.q(13)).foregroundStyle(Color.dimText)
                 }
-                .padding(.top, 26).padding(.leading, 16).padding(.bottom, 12)
+                .padding(.top, 26).padding(.horizontal, 28).padding(.bottom, 12)
                 if loading {
-                    VStack(spacing: 12) { ForEach(0..<3, id: \.self) { _ in Skeleton(height: 84) } }.padding(.horizontal, 16)
+                    VStack(spacing: 12) { ForEach(0..<3, id: \.self) { _ in Skeleton(height: 84) } }.padding(.horizontal, 28)
                 } else if let e = err {
-                    Note(e, error: true)
+                    Note(e, error: true).padding(.horizontal, 12)
                 } else if eps.isEmpty {
-                    Note("No episodes listed.")
+                    Note("No episodes listed.").padding(.horizontal, 12)
                 } else {
-                    ForEach(eps) { ep in EpisodeRow(ep: ep) { if let id = ep.jf { nav.play = PlayRequest(itemId: id) } } }
+                    VStack(spacing: 0) {
+                        ForEach(eps) { ep in EpisodeRow(ep: ep) { if let id = ep.jf { nav.play = PlayRequest(itemId: id) } } }
+                    }
+                    .padding(.horizontal, 20)
                 }
             } else if !loading {
-                if lib { Note("No seasons in the library yet.") }
+                if lib { Note("No seasons in the library yet.").padding(.horizontal, 12) }
             }
         }
-        .padding(.top, 16)
         .task { await loadSeasons() }
         .task(id: cur + (seasons.count << 8)) { await loadEpisodes(cur) }
         .sheet(isPresented: $open) {
@@ -453,24 +461,25 @@ struct EpisodeRow: View {
                     if let u = ep.img { Pic_(u, radius: 0) }
                     if ep.jf != nil {
                         Icon(name: "play", size: 22, color: .white).frame(width: 34, height: 34).background(Color.black.opacity(0.55), in: Circle())
-                    } else if let n = ep.n { Text(String(n)).font(.q(26)).foregroundStyle(Color(hex: 0x34343a)) }
+                    } else if let n = ep.n {
+                        Text(String(n)).font(.q(26)).foregroundStyle(ep.img == nil ? Color(hex: 0x34343a) : .white).shadow(color: .black, radius: 3, y: 1)
+                    }
                 }
                 .frame(width: 112, height: 63).clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 VStack(alignment: .leading, spacing: 0) {
                     Text("\(ep.n.map { "\($0). " } ?? "")\(ep.name)").font(.q(15)).foregroundStyle(Color(hex: 0xe6e6e6)).lineLimit(1)
-                    Text(ep.overview ?? "").font(.q(12)).foregroundStyle(Color.dimText).lineLimit(2).padding(.top, 2)
+                    Text(ep.overview ?? "").font(.q(12)).foregroundStyle(Color.dimText).lineLimit(2).padding(.top, 4)
                     if ep.pct > 0 {
                         // the whole length of the episode, with the part already watched filled, so what is left shows
                         ZStack(alignment: .leading) {
                             Capsule().fill(Color.white.opacity(0.22))
                             GeometryReader { g in Capsule().fill(Color.pink).frame(width: g.size.width * min(1, ep.pct / 100)) }
-                        }.frame(height: 5).padding(.top, 8)
+                        }.frame(height: 3).padding(.top, 6)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                if let m = ep.min { Text("\(m) min").font(.q(12)).foregroundStyle(Color.dimText) }
             }
-            .padding(8).padding(.horizontal, 8)
+            .padding(8).padding(.bottom, 4)
         }
         .buttonStyle(PressStyle()).disabled(ep.jf == nil)
     }

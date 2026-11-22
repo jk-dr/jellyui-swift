@@ -27,7 +27,7 @@ private struct SRow<C: View>: View {
             }.frame(maxWidth: .infinity, alignment: .leading)
             control().fixedSize()
         }
-        .padding(12).background(Color(hex: 0x121214), in: RoundedRectangle(cornerRadius: 12, style: .continuous)).padding(.bottom, 4.8)
+        .padding(12).background(Color(hex: 0x121214), in: RoundedRectangle(cornerRadius: 12, style: .continuous)).padding(.bottom, 8)
     }
 }
 
@@ -95,13 +95,12 @@ private struct ActRow: View {
     let label: String
     var desc: String?
     let button: String
-    var danger = false
     let action: () -> Void
     var body: some View {
         SRow(label: label, desc: desc) {
             Button(action: action) {
-                Text(button).font(.q(13)).foregroundStyle(danger ? Color(hex: 0x2a0a0a) : Color.pink)
-                    .padding(.horizontal, 14).frame(height: 34).background(danger ? Color.danger : Color.surfaceHi, in: Capsule())
+                Text(button).font(.q(13)).foregroundStyle(Color.pink)
+                    .padding(.horizontal, 14).frame(height: 34).background(Color.surfaceHi, in: Capsule())
             }.buttonStyle(.plain)
         }
     }
@@ -152,10 +151,11 @@ struct SettingsScreen: View {
                 switch sec {
                 case "Profile":
                     InfoRow(label: "Display name", value: session.userName + (session.isAdmin ? " (admin)" : ""))
-                    InfoRow(label: "Server", value: session.server)
+                    ActRow(label: "Profile image", desc: "Shown next to your name.", button: "Change image") {}
                     ActRow(label: "Password", button: "Change password") { pwOpen = true }
+                    ActRow(label: "Easy PIN code", desc: "A short PIN for signing in on your home network.", button: "Set PIN") {}
                     ActRow(label: "Quick Connect", desc: "Enter the code shown on another device to sign it in.", button: "Enter code") { qcOpen = true }
-                    ActRow(label: "Sign out", button: "Sign out", danger: true) { signOutAsk = true }
+                    ActRow(label: "Sign out", button: "Sign out") { signOutAsk = true }
                 case "Home":
                     ToggleRow(label: "My Media", desc: "Show your libraries on the Home page.", value: $s.homeLibraries)
                     ToggleRow(label: "Continue Watching", value: $s.homeContinue)

@@ -453,7 +453,8 @@ struct Pic_: View {
     }
 
     var body: some View {
-        Theme.surface
+        // a fitted picture (a logo) shows the tile under it; a filled one keeps the dark backing while it loads
+        (fit == .fit ? Color.clear : Theme.surface)
             .overlay {
                 if let image {
                     Image(uiImage: image).resizable().aspectRatio(contentMode: fit).transition(.opacity)
