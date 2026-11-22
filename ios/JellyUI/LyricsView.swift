@@ -13,10 +13,14 @@ import SwiftUI
 final class LyricsClock {
     private(set) var idx = -1
     private(set) var sidx = -1
+    /// a line before the sung one whose last words are still filling (the web's .fill): it stays lit, full size, until they are sung
+    private(set) var fill = -1
     @ObservationIgnored private var task: Task<Void, Never>?
+    @ObservationIgnored private var ends: [Double] = []
 
-    func run(starts: [Double], sstarts: [Double], player: PlayerModel) {
+    func run(starts: [Double], sstarts: [Double], ends: [Double], player: PlayerModel) {
         task?.cancel()
+        self.ends = ends
         step(starts, sstarts, player) // the current row now, before the first frame, so an opening screen can scroll to it
         task = Task { @MainActor [weak self] in
             while !Task.isCancelled {
@@ -35,10 +39,16 @@ final class LyricsClock {
         let s = max(i, Lyr.indexAt(sstarts, t))
         if i != idx { idx = i }
         if s != sidx { sidx = s }
-        // sleep until the next boundary (either list), capped so a seek or pause is noticed within 0.25 s
+        // the line before still filling (its last word ends after now)
+        var f = -1
+        var k = i - 1
+        while k >= 0 && k >= i - 2 { if ends.indices.contains(k), ends[k] > t { f = k; break }; k -= 1 }
+        if f != fill { fill = f }
+        // sleep until the next boundary (either list, or the filling line's end), capped so a seek or pause is noticed within 0.25 s
         let nextA = i + 1 < starts.count ? starts[i + 1] : .infinity
         let nextS = s + 1 < sstarts.count ? sstarts[s + 1] : .infinity
-        return player.isPlaying ? min(0.25, max(0.008, min(nextA, nextS) - t)) : 0.25
+        let nextF = f >= 0 ? ends[f] : .infinity
+        return player.isPlaying ? min(0.25, max(0.008, min(nextA, nextS, nextF) - t)) : 0.25
     }
 
     func stop() { task?.cancel(); task = nil }
@@ -319,16 +329,17 @@ struct LyricsView: View {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(lines.enumerated()), id: \.element.id) { i, l in
                             let isActive = synced && i == idx
+                            let filling = synced && i == clock.fill // still filling after the next line began: lit and full size until done
                             let upcoming = synced && i > idx && i <= idx + 2
                             // in focus: the sung line, the next one, and up to two more starting within 2.5 s of it
                             let near = i == idx + 1 || (upcoming && idx >= 0 && (l.t ?? 1e9) - (lines[idx].t ?? 0) <= 2.5)
                             LyricRow(
                                 ink: ink, line: l, size: 30,
-                                active: isActive || !synced,
-                                level: !playing ? 0.07 : (!synced ? 0.9 : (isActive || (i < idx && l.words != nil) ? 1 : (upcoming ? 0.3 : 0.15))),
-                                playing: playing && isActive,
+                                active: isActive || filling || !synced,
+                                level: !playing ? 0.07 : (!synced ? 0.9 : (isActive || filling || (i < idx && l.words != nil) ? 1 : (upcoming ? 0.3 : 0.15))),
+                                playing: playing && (isActive || filling),
                                 player: player,
-                                soft: synced && !l.brk && !isActive && !near,
+                                soft: synced && !l.brk && !isActive && !filling && !near,
                                 tick: seekTick,
                                 onTap: { if let lt = l.t { player.seek(to: max(0, lt - 0.05)); hold = .distantPast; Task { try? await Task.sleep(for: .milliseconds(60)); start() } } }
                             )
@@ -371,6 +382,11 @@ struct LyricsView: View {
     }
 
     private func start() {
-        clock.run(starts: Lyr.activeStarts(lines), sstarts: Lyr.scrollStarts(lines), player: player)
+        // when each word-timed line's last word (or backing word) is sung
+        let ends = lines.map { l -> Double in
+            let ws = (l.words ?? []) + (l.back ?? [])
+            return ws.map { ($0.e ?? 0) > $0.t ? $0.e! : $0.t + 0.25 }.max() ?? -.infinity
+        }
+        clock.run(starts: Lyr.activeStarts(lines), sstarts: Lyr.scrollStarts(lines), ends: ends, player: player)
     }
 }
