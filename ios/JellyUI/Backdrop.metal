@@ -48,21 +48,21 @@ static float3 tx(constant float *a, float2 q) {
     float3 ca = tx(a, q) * 3.0;
     float3 cb = ca;
     if (two) cb = tx(b, q) * 3.0;
-    for (int i = 0; i < 4; i++) {
-        float g = float(i) * 1.5708 + 0.39;
+    for (int i = 0; i < 8; i++) {
+        float g = float(i) * 0.7854;
         float2 d = float2(cos(g), sin(g));
-        float2 o1 = d * 0.22;
-        float2 o2 = d * 0.46;
+        float2 o1 = d * 0.07;
+        float2 o2 = d * 0.15;
         ca += tx(a, q + o1) * 1.5 + tx(a, q + o2);
         if (two) cb += tx(b, q + o1) * 1.5 + tx(b, q + o2);
     }
-    ca /= 3.0 + 4.0 * 2.5;
-    cb /= 3.0 + 4.0 * 2.5;
+    ca /= 3.0 + 8.0 * 2.5;
+    cb /= 3.0 + 8.0 * 2.5;
     float3 ma = (tx(a, float2(0.25, 0.25)) + tx(a, float2(0.75, 0.25)) + tx(a, float2(0.25, 0.75)) + tx(a, float2(0.75, 0.75))) * 0.25;
     float3 mb = ma;
     if (two) mb = (tx(b, float2(0.25, 0.25)) + tx(b, float2(0.75, 0.25)) + tx(b, float2(0.25, 0.75)) + tx(b, float2(0.75, 0.75))) * 0.25;
-    ca = mix(ca, ma, 0.75);
-    cb = mix(cb, mb, 0.75);
+    ca = mix(ca, ma, 0.12);
+    cb = mix(cb, mb, 0.12);
     if (!two) cb = ca;
     // lifts the darkened picture to about 60 %, and holds a pale cover down so light lyrics stand out
     float3 c = min(mix(ca, cb, mixAB) * 1.75, float3(1.0));

@@ -167,6 +167,13 @@ struct NowPlaying: View {
 
     private var qg: QGeo { QGeo(H: UIScreen.main.bounds.height, top: Insets.top, bottom: Insets.bottom) }
 
+    init() {
+        // lyrics (or the knowledge that there are none) loaded ahead are there from the first frame: no spinner swapped for the cover after the opening
+        if let c = PlayerModel.shared.current, let m = LyricsMemo.map[c.id] {
+            _lines = State(initialValue: m); _loading = State(initialValue: false); _lyricsFor = State(initialValue: c.id)
+        }
+    }
+
     var body: some View {
         let H = UIScreen.main.bounds.height
         let top = Insets.top, bottom = Insets.bottom
@@ -207,9 +214,6 @@ struct NowPlaying: View {
                     }
                 }
                 .offset(y: -up).opacity(qp > 1 ? Double(2 - qp) : 1)
-                // the strip down the right edge closes the screen from over the lyrics
-                Color.clear.contentShape(Rectangle()).frame(width: 46).frame(maxWidth: .infinity, alignment: .trailing)
-                    .padding(.top, top + 76).padding(.bottom, 222 + bottom).gesture(zone(H, noQueue: true))
             } else {
                 // no lyrics (or hidden): the cover and the name fill the space, centred
                 VStack(spacing: 0) {
@@ -226,6 +230,14 @@ struct NowPlaying: View {
             }
 
             EdgeFades(look: look).opacity(pm.isPlaying ? 1 : 0.4).animation(.easeInOut(duration: 0.7), value: pm.isPlaying)
+
+            // the strip down the right edge: a swipe up there raises the queue a level (closed -> small -> full), down lowers it or closes the screen.
+            // It reaches down to the risen controls, so it works over the small queue too (the shrunk cover no longer covers the right side).
+            if qp < 1.5 {
+                Color.clear.contentShape(Rectangle()).frame(width: 52).frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.top, top + 64).padding(.bottom, 222 + bottom + min(L, g.lift))
+                    .gesture(zone(H))
+            }
 
             if showLyrics, let it {
                 HStack(spacing: 14) {
@@ -515,6 +527,13 @@ struct QueuePanel: View {
     @Environment(PlayerModel.self) private var pm
     @State private var touching = false // the person's finger is scrolling the list (programmatic scrolls never change the level)
 
+    /// scrolls a row to 40 under the list's top (the room kept above the first row), not to the very top: a row's point at y = f * 66
+    /// meets the list's point at f * its height, so f = 40 / (height - 66)
+    private var rowTop: UnitPoint {
+        let h = UIScreen.main.bounds.height - (top + 12)
+        return UnitPoint(x: 0.5, y: 40 / max(1, h - 66))
+    }
+
     var body: some View {
         let full = level > 1.5
         ZStack(alignment: .top) {
@@ -540,9 +559,9 @@ struct QueuePanel: View {
                 }
                 // the web's: in the small queue the list is lifted by the 40 kept for the chevron, so it starts right under the buttons
                 .offset(y: -40 * (1 - max(0, min(1, level - 1))))
-                .onAppear { proxy.scrollTo(pm.index, anchor: .top) }
+                .onAppear { proxy.scrollTo(pm.index, anchor: rowTop) }
                 // the playing song goes to the top at once, with no animation
-                .onChange(of: pm.index) { _, n in var t = Transaction(); t.disablesAnimations = true; withTransaction(t) { proxy.scrollTo(n, anchor: .top) } }
+                .onChange(of: pm.index) { _, n in var t = Transaction(); t.disablesAnimations = true; withTransaction(t) { proxy.scrollTo(n, anchor: rowTop) } }
             }
             // the chevron at the top of the full queue lowers it to the small one
             Button { set(1) } label: {

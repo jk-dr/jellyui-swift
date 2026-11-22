@@ -207,7 +207,7 @@ struct MixStrip: View {
         let step: CGFloat = 114 // tile and gap
         let half = CGFloat(n) * step
         let period = Double(n) * 5 // the web's: 5 s a cover
-        return TimelineView(.animation) { tl in
+        return Color.clear.frame(maxWidth: .infinity).frame(height: 104).overlay(alignment: .leading) { TimelineView(.animation) { tl in
             let t = tl.date.timeIntervalSince(start).truncatingRemainder(dividingBy: period)
             HStack(spacing: 10) {
                 ForEach(0..<(row.isEmpty ? 40 : n * 2), id: \.self) { k in
@@ -222,8 +222,7 @@ struct MixStrip: View {
             }
             .fixedSize()
             .offset(x: -CGFloat(t / period) * half)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
+        } }
         .frame(height: 104)
         .clipped()
         .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.07), .init(color: .black, location: 0.93), .init(color: .clear, location: 1)], startPoint: .leading, endPoint: .trailing))

@@ -85,7 +85,6 @@ struct BackdropView: View {
                     .fill(Color.black)
                     .frame(width: w, height: h)
                     .colorEffect(ShaderLibrary.fluid(.float2(w, h), .float(clock.step(tl.date, running: playing)), .float(m), .floatArray(a), .floatArray(b)))
-                    .blur(radius: 0.6, opaque: true)
                     .scaleEffect(divisor)
                     .frame(width: geo.size.width, height: geo.size.height)
                     .clipped()

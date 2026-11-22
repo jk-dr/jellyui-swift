@@ -56,7 +56,7 @@ enum Lyr {
         lines.map { l in
             let words = (l.words?.isEmpty ?? true) ? nil : l.words
             let back: [LyricWord]? = words != nil && !(l.back?.isEmpty ?? true)
-                ? l.back!.map { LyricWord(t: $0.t, e: $0.e, w: $0.w.replacingOccurrences(of: "(", with: "").replacingOccurrences(of: ")", with: "")) }
+                ? Lyr.capitalFirst(l.back!.map { LyricWord(t: $0.t, e: $0.e, w: $0.w.replacingOccurrences(of: "(", with: "").replacingOccurrences(of: ")", with: "")) })
                 : nil
             return LyricLine(text: l.text ?? "", t: l.t, e: l.e, words: words, back: back)
         }
@@ -192,6 +192,8 @@ actor LyricsStore {
             if done.count > 40, let k = done.keys.first { done[k] = nil }
         } else if failures[it.id] != true {
             none[it.id] = Date() // a clean "no lyrics" answer is remembered; a failed request is not
+            let id = it.id
+            await MainActor.run { LyricsMemo.map[id] = [] }
         }
         return r
     }
@@ -218,5 +220,18 @@ actor LyricsStore {
         } catch { failed = true }
         if failed { await LyricsStore.shared.markFailed(it.id) }
         return nil
+    }
+}
+
+
+extension Lyr {
+    /// the first letter of a line's first word made upper case (backing lines often start lower case)
+    static func capitalFirst(_ ws: [LyricWord]) -> [LyricWord] {
+        guard var w = ws.first(where: { $0.w.contains { $0.isLetter } }), let k = ws.firstIndex(of: w),
+              let i = w.w.firstIndex(where: { $0.isLetter }) else { return ws }
+        var out = ws
+        w.w.replaceSubrange(i...i, with: String(w.w[i]).uppercased())
+        out[k] = w
+        return out
     }
 }

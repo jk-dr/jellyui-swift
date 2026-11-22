@@ -221,7 +221,7 @@ private struct LyricRow: View, Equatable {
         // the line that becomes current takes its full colour at once (a fade made the words hard to follow); the others ease
         .opacity(line.brk ? (active ? (level < 0.1 ? 0.07 : 1) : 0) : level)
         // smooth, never sudden: the line coming in brightens quickly (so it can be followed), the others ease over 0.7 s
-        .animation(active ? .easeOut(duration: 0.22) : .easeInOut(duration: 0.7), value: level)
+        .animation(active ? nil : .easeInOut(duration: 0.7), value: level)
         // out of focus: sharp at once when it comes into focus; going out, it first finishes shrinking (0.8 s), then blurs over 0.7 s
         .blur(radius: soft ? size * 0.1 : 0)
         .animation(soft ? .easeInOut(duration: 0.7).delay(0.84) : .easeOut(duration: 0.25), value: soft)
@@ -358,8 +358,14 @@ struct LyricsView: View {
                 .padding(.horizontal, 18)
             }
             .simultaneousGesture(DragGesture(minimumDistance: 8).onChanged { _ in hold = Date().addingTimeInterval(3) })
-            .onChange(of: clock.sidx) { _, new in
-                guard synced, new >= 0, Date() > hold else { return }
+            .onChange(of: clock.sidx) { old, new in
+                guard synced, Date() > hold else { return }
+                if new < old {
+                    var t = Transaction(); t.disablesAnimations = true
+                    withTransaction(t) { proxy.scrollTo(max(0, new), anchor: UnitPoint(x: 0.5, y: anchor)) }
+                    return
+                }
+                guard new >= 0 else { return }
                 withAnimation(.timingCurve(0.45, 0.05, 0.15, 1, duration: 0.8)) {
                     proxy.scrollTo(new, anchor: UnitPoint(x: 0.5, y: anchor))
                 }
