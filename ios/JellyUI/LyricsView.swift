@@ -311,6 +311,7 @@ struct LyricsView: View {
     @State private var hold = Date.distantPast
     @State private var seekTick = 0
     @State private var placed = false
+    @State private var seekedAt = Date.distantPast // a seek (the bar let go, a line tapped, the lock screen) just landed
 
     // written out (not the memberwise one): the private state above would make that initializer private
     init(lines: [LyricLine], player: PlayerModel, topInset: CGFloat = 40, bottomInset: CGFloat = 200, anchor: CGFloat = 0.4) {
@@ -366,6 +367,12 @@ struct LyricsView: View {
                     return
                 }
                 guard new >= 0 else { return }
+                // the first line change after a seek forward: there quickly, not with the slow glide of one line to the next
+                if Date().timeIntervalSince(seekedAt) < 1.5 {
+                    seekedAt = .distantPast
+                    withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(new, anchor: UnitPoint(x: 0.5, y: anchor)) }
+                    return
+                }
                 withAnimation(.timingCurve(0.45, 0.05, 0.15, 1, duration: 0.8)) {
                     proxy.scrollTo(new, anchor: UnitPoint(x: 0.5, y: anchor))
                 }
@@ -382,7 +389,7 @@ struct LyricsView: View {
             }
             .onChange(of: lines.first?.id) { _, _ in start() }
             .onChange(of: playing) { _, _ in start() } // a resume or a seek wakes the clock at once
-            .onChange(of: player.seeks) { _, _ in start() }
+            .onChange(of: player.seeks) { _, _ in seekedAt = Date(); hold = .distantPast; start() }
             // the small queue opened or closed: the sung line glides to its new resting place, with the queue's own curve
             .onChange(of: anchor) { _, a in
                 guard synced, clock.sidx >= 0 else { return }

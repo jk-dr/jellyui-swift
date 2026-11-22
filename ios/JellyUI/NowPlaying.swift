@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 func timeText(_ s: Double) -> String {
     guard s.isFinite, s >= 0 else { return "0:00" }
@@ -216,15 +217,18 @@ struct NowPlaying: View {
                 .offset(y: -up).opacity(qp > 1 ? Double(2 - qp) : 1)
             } else {
                 // no lyrics (or hidden): the cover and the name fill the space, centred
+                // the column sits between the header room and the controls; as the controls rise over the small queue only the cover
+                // shrinks to fit (the title and artist keep their size and stay under it)
+                let room = H - (top + 64) - (222 + bottom + min(L, g.lift))
+                let side = max(72, min(420, UIScreen.main.bounds.width * 0.82, room - 90))
                 VStack(spacing: 0) {
-                    if let it { Pic_(Pic.square(it, 700), radius: 12).aspectRatio(1, contentMode: .fit).frame(maxWidth: 420).containerRelativeFrame(.horizontal) { w, _ in w * 0.82 } }
+                    if let it { Pic_(Pic.square(it, 700), radius: 12).frame(width: side, height: side) }
                     MarqueeText(text: it?.title ?? "", font: .q(26), color: ink.color(), center: true).padding(.top, 24).shadow(color: .black.opacity(0.75), radius: 4, y: 1)
                     MarqueeText(text: artist, font: .q(17), color: ink.color(), center: true).padding(.top, 6).shadow(color: .black.opacity(0.75), radius: 4, y: 1)
                     if loading { Spinner().padding(.top, 20) }
                 }
                 .padding(.horizontal, 18).frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.top, top + 64).padding(.bottom, 222 + bottom)
-                .scaleEffect(1 - 0.28 * min(1, qp), anchor: .top) // the web's: the cover shrinks over the small queue
+                .padding(.top, top + 64).padding(.bottom, 222 + bottom + min(L, g.lift))
                 .offset(y: -up)
                 .contentShape(Rectangle()).gesture(zone(H))
             }
@@ -585,7 +589,6 @@ private struct QueueRow: View {
     let played: Bool
     @Environment(PlayerModel.self) private var pm
     @State private var dx: CGFloat = 0
-    @State private var horiz: Bool?
     @State private var gone = false
 
     var body: some View {
@@ -604,21 +607,16 @@ private struct QueueRow: View {
                 row
                     .offset(x: dx)
             }
-            .simultaneousGesture(DragGesture(minimumDistance: 12)
-                .onChanged { v in
-                    if horiz == nil { horiz = v.translation.width > 0 && abs(v.translation.width) > abs(v.translation.height) * 1.3 }
-                    if horiz == true { dx = max(0, v.translation.width) }
+            // a UIKit pan that only starts on a swipe to the right: an up/down drag is left to the list, which scrolls
+            // (a SwiftUI drag on every row took the vertical drags too, and the queue could not be scrolled)
+            .gesture(RowSwipe(changed: { dx = max(0, $0) }, ended: { x, v in
+                if x > w * 0.35 || (x > 20 && v > 900) {
+                    withAnimation(.easeOut(duration: 0.22)) { dx = w; gone = true }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { pm.remove(at: i); dx = 0; gone = false }
+                } else {
+                    withAnimation(.easeOut(duration: 0.2)) { dx = 0 }
                 }
-                .onEnded { v in
-                    defer { horiz = nil }
-                    guard horiz == true else { return }
-                    if dx > w * 0.35 || (v.predictedEndTranslation.width > w * 0.7) {
-                        withAnimation(.easeOut(duration: 0.22)) { dx = w; gone = true }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { pm.remove(at: i); dx = 0; gone = false }
-                    } else {
-                        withAnimation(.easeOut(duration: 0.2)) { dx = 0 }
-                    }
-                })
+            }))
         }
         .frame(height: 66)
         .opacity(gone ? 0 : 1)
@@ -676,4 +674,37 @@ struct QGeo {
     func level(_ l: CGFloat) -> CGFloat { l <= lift ? max(0, l / lift) : min(2, 1 + (l - lift) / range) }
     /// the list's offset from its full-queue place
     func listY(_ p: CGFloat) -> CGFloat { p <= 1 ? range + lift * (1 - max(0, p)) : range * (2 - min(2, p)) }
+}
+
+
+/// A pan that begins only when the finger moves mostly to the right, so the scroll view keeps every vertical drag.
+struct RowSwipe: UIGestureRecognizerRepresentable {
+    var changed: (CGFloat) -> Void
+    var ended: (_ dx: CGFloat, _ velocity: CGFloat) -> Void
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+            guard let p = g as? UIPanGestureRecognizer else { return false }
+            let v = p.velocity(in: p.view)
+            return v.x > 0 && abs(v.x) > abs(v.y) * 1.3
+        }
+    }
+
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let g = UIPanGestureRecognizer()
+        g.delegate = context.coordinator
+        return g
+    }
+
+    func handleUIGestureRecognizerAction(_ g: UIPanGestureRecognizer, context: Context) {
+        let dx = g.translation(in: g.view).x
+        switch g.state {
+        case .began, .changed: changed(dx)
+        case .ended: ended(dx, g.velocity(in: g.view).x)
+        case .cancelled, .failed: ended(0, 0)
+        default: break
+        }
+    }
 }

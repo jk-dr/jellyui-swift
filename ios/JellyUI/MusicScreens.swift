@@ -543,7 +543,7 @@ struct MusicScreen: View {
                 if loadedOnce { Note("No songs yet.") }
             } else {
                 RowColumns(songs: quick, colW: width - 56) { idx in
-                    pm.play(quick, at: idx, more: { await Api.randomSongs(50) })
+                    pm.play(Self.shuffledFrom(quick, idx), at: 0, more: { await Api.randomSongs(50) })
                 }
                 .padding(.top, 20)
             }
@@ -559,7 +559,7 @@ struct MusicScreen: View {
             if !enjoy.isEmpty {
                 H2("You’ll Enjoy").padding(.top, -6)
                 RowColumns(songs: enjoy, colW: width - 56) { idx in
-                    pm.play(enjoy, at: idx, more: { await Api.randomSongs(50) })
+                    pm.play(Self.shuffledFrom(enjoy, idx), at: 0, more: { await Api.randomSongs(50) })
                 }
                 .padding(.top, 20)
             }
@@ -591,6 +591,13 @@ struct MusicScreen: View {
     // MARK: data
 
     /// The songs with the highest short-term score, in the server's order (at most 25)
+    /// a new queue: the tapped song first, then the rest of its row shuffled
+    private static func shuffledFrom(_ songs: [Item], _ i: Int) -> [Item] {
+        guard songs.indices.contains(i) else { return songs.shuffled() }
+        var rest = songs; let first = rest.remove(at: i)
+        return [first] + rest.shuffled()
+    }
+
     private static func enjoyed() async -> [Item] {
         struct Scores: Decodable { struct E: Decodable { var id: String }; var items: [E]? }
         guard let r: Scores = try? await Api.get("/JellyUI/ShortScores", ["limit": 80], quiet: true) else { return [] }
