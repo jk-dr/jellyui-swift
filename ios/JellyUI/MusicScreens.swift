@@ -168,7 +168,9 @@ struct SongMenuItems: View {
         if SongCache.shared.isSaved(it.id) {
             Button(role: .destructive) { SongCache.shared.drop(it.id) } label: { Label("Delete my download", systemImage: "arrow.down.circle") }
         }
-        Button(role: .destructive) { Confirm.shared.ask(DeleteSong(it: it)) } label: { Label("Delete from storage", systemImage: "trash") }
+        if it.canDelete == true { // only where the server lets this account delete it (the web's CanDelete)
+            Button(role: .destructive) { Confirm.shared.ask(DeleteSong(it: it)) } label: { Label("Delete from storage", systemImage: "trash") }
+        }
         if player {
             Button { pm.toggleShuffle() } label: { Label(pm.shuffleOn ? "Shuffle: on" : "Shuffle", systemImage: "shuffle") }
             Button { pm.cycleRepeat() } label: { Label(pm.repeatMode == "one" ? "Repeat: one song" : (pm.repeatMode == "all" ? "Repeat: all" : "Repeat: off"), systemImage: pm.repeatMode == "one" ? "repeat.1" : "repeat") }

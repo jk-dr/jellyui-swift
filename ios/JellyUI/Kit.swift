@@ -401,10 +401,31 @@ struct SavedEdge: ViewModifier {
         content.overlay {
             if SongCache.shared.isSaved(id) {
                 RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(Color(hex: 0x3d7cf0), lineWidth: 2)
+                SavedGlint(radius: radius)
             }
         }
     }
 }
+/// The white glint that runs round a saved song's blue edge (the web's svsh: a band at 115 degrees, left to right, every 3.2 s).
+/// A repeating animation the render server runs: the row is not redrawn for it.
+private struct SavedGlint: View {
+    let radius: CGFloat
+    @State private var go = false
+    var body: some View {
+        GeometryReader { g in
+            let w = g.size.width
+            LinearGradient(stops: [.init(color: .clear, location: 0.4), .init(color: .white.opacity(0.85), location: 0.5), .init(color: .clear, location: 0.6)],
+                           startPoint: UnitPoint(x: 0, y: 0.29), endPoint: UnitPoint(x: 1, y: 0.71))
+                .frame(width: w * 2.5, height: g.size.height)
+                .offset(x: go ? w * 0.9 : -w * 2.4)
+                .onAppear { withAnimation(.linear(duration: 3.2).repeatForever(autoreverses: false)) { go = true } }
+        }
+        .mask(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(lineWidth: 2))
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 extension View { func savedEdge(_ id: String, radius: CGFloat = 8) -> some View { modifier(SavedEdge(id: id, radius: radius)) } }
 
 // MARK: - Skeleton

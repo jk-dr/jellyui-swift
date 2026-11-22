@@ -230,6 +230,12 @@ enum Api {
     }
 
     static func get<T: Decodable>(_ path: String, _ query: [String: Any?] = [:], quiet: Bool = false) async throws -> T {
+        var query = query
+        // item lists also say whether this account may delete each item (the song menu's "Delete from storage" needs it)
+        if path.hasSuffix("/Items") {
+            let f = (query["Fields"] ?? nil) as? String ?? ""
+            if !f.contains("CanDelete") { query["Fields"] = f.isEmpty ? "CanDelete" : f + ",CanDelete" }
+        }
         let d = try await request(path, query: query, quiet: quiet)
         return try jellyDecoder.decode(T.self, from: d)
     }
