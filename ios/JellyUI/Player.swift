@@ -162,6 +162,13 @@ final class PlayerModel {
         load()
     }
 
+    /// Plays a song now, put in right after the playing one; the songs queued behind it stay (the web's playNow: a song from search).
+    func playNow(_ it: Item) {
+        if queue.isEmpty || current == nil { play([it]); return }
+        queue.insert(it, at: index + 1)
+        jump(to: index + 1)
+    }
+
     func enqueueNext(_ s: Item) { playNext(s) }
     func enqueueLast(_ s: Item) { addToQueue([s]) }
 

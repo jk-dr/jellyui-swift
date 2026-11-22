@@ -166,7 +166,7 @@ struct SearchScreen: View {
                 ForEach(more.filter { $0.type == "MusicArtist" }) { a in row(a, "Artist", round: true) { go(.artist(a.id)) } }
                 ForEach(Array(songs.enumerated()), id: \.element.id) { i, it in
                     HStack(spacing: 4) {
-                        row(it, it.artistLine.isEmpty ? "Song" : it.artistLine) { remember(); pm.play(songs, at: i) }
+                        row(it, it.artistLine.isEmpty ? "Song" : it.artistLine) { remember(); focused = false; close {}; pm.playNow(it) }
                             .contextMenu { SongMenuItems(it: it) }
                         SongMenu(it: it) {
                             Icon(name: "moreV", size: 18, color: Color(hex: 0xcfcfcf)).frame(width: 34, height: 34).background(Color.surfaceHi, in: Circle())
@@ -242,7 +242,7 @@ struct SearchScreen: View {
             ForEach(0..<n, id: \.self) { i in
                 let it = res.songs[i]
                 HStack(spacing: 4) {
-                    row(it, it.artistLine.isEmpty ? "Song" : it.artistLine) { remember(); pm.play(res.songs, at: i) }
+                    row(it, it.artistLine.isEmpty ? "Song" : it.artistLine) { remember(); focused = false; close {}; pm.playNow(it) }
                         .contextMenu { SongMenuItems(it: it) }
                     SongMenu(it: it) {
                         Icon(name: "moreV", size: 18, color: Color(hex: 0xcfcfcf)).frame(width: 34, height: 34).background(Color.surfaceHi, in: Circle())
@@ -334,7 +334,14 @@ struct SearchScreen: View {
         if Task.isCancelled { return }
         defer { if !Task.isCancelled { loading = false } }
         do {
-            let r = try await Api.items(["searchTerm": query, "IncludeItemTypes": "Movie,Series,MusicArtist,MusicAlbum,Audio,Playlist", "Recursive": true, "Limit": 60, "Fields": "ProviderIds,AlbumArtist,RunTimeTicks", "EnableImageTypes": "Primary,Backdrop", "ImageTypeLimit": 1])
+            // the library's own movies, shows, artists, albums, songs and playlists, searched on the server with nothing online (the web's /JellyUI/Find).
+            // Jellyfin's own search is what the YouTube / SoundCloud plugin hooks into: it went online on every search. Those come only from "Load song providers".
+            struct Found: Decodable { var items: [Item]? }
+            var q: [String: Any?] = ["q": query, "limit": 80]
+            let plain = String(query.filter { !"\u{2019}\u{2018}'`".contains($0) })
+            if plain != query { q["alt"] = plain } // "don't" also as "dont", as the web asks
+            let f: Found = try await Api.get("/JellyUI/Find", q)
+            let r = (f.items ?? []).filter { !$0.isVirtual }
             if Task.isCancelled { return }
             func by(_ t: String) -> [Item] { r.filter { $0.type == t } }
             res = SearchResults(movies: by("Movie"), shows: by("Series"), artists: by("MusicArtist"), albums: by("MusicAlbum"), songs: by("Audio"), playlists: by("Playlist"))
