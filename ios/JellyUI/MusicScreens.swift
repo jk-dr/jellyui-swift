@@ -113,7 +113,7 @@ struct ListMenu: View {
                 Button(action: onFav) { Label(favOn ? "Remove from favourites" : "Add to favourites", systemImage: favOn ? "heart.slash" : "heart") }
             }
         } label: {
-            Icon(name: "more", size: 20, color: .pink).frame(width: 44, height: 44).background(Color.surfaceHi, in: Circle())
+            Icon(name: "moreV", size: 20, color: .pink).frame(width: 44, height: 44).background(Color.surfaceHi, in: Circle())
         }
         .disabled(songs.isEmpty)
         .onAppear { pls.load() }
@@ -224,7 +224,7 @@ struct SongRow: View {
             .buttonStyle(PressStyle())
             .contextMenu { SongMenuItems(it: it) }
             SongMenu(it: it) {
-                Icon(name: "more", size: 20, color: Color(hex: 0xcfcfcf)).frame(width: 38, height: 38).contentShape(Rectangle())
+                Icon(name: "moreV", size: 20, color: Color(hex: 0xcfcfcf)).frame(width: 38, height: 38).contentShape(Rectangle())
             }
         }
         .padding(.horizontal, 16).padding(.bottom, 6)
@@ -340,7 +340,7 @@ struct QuickRow: View {
             .buttonStyle(PressStyle())
             .contextMenu { SongMenuItems(it: it) }
             SongMenu(it: it) {
-                Icon(name: "more", size: 22, color: Color(hex: 0xbdbdc2)).frame(width: 40, height: 40).contentShape(Rectangle())
+                Icon(name: "moreV", size: 22, color: Color(hex: 0xbdbdc2)).frame(width: 40, height: 40).contentShape(Rectangle())
             }
         }
         .frame(width: width)

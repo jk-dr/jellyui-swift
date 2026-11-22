@@ -307,7 +307,7 @@ struct NowPlaying: View {
             VStack(spacing: 10) {
                 HStack(spacing: 0) {
                     fs("skipPrev", "Previous") { pm.previous() }
-                    fs(pm.isPlaying || pm.loading ? "pause" : "play", "Play", main: true) { pm.toggle() }
+                    fs(pm.isPlaying || pm.loading ? "pause" : "play", pm.isPlaying || pm.loading ? "Pause" : "Play", main: true) { pm.toggle() }
                     fs("skipNext", "Next") { pm.nextSong() }
                 }
                 HStack(spacing: 0) {

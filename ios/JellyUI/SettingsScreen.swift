@@ -143,11 +143,11 @@ struct SettingsScreen: View {
                                 .padding(.horizontal, 16).padding(.vertical, 8).background(t == sec ? Color.surfaceHi : .clear, in: Capsule())
                         }.buttonStyle(.plain)
                     }
-                }.padding(.horizontal, 16).padding(.vertical, 4)
+                }.padding(.horizontal, 24).padding(.vertical, 4)
             }.padding(.top, 14)
 
             VStack(alignment: .leading, spacing: 0) {
-                Text(sec).font(.q(20)).foregroundStyle(Color.pink).padding(.horizontal, 4).padding(.bottom, 10)
+                Text(sec).font(.q(20)).foregroundStyle(Color.pink).padding(.horizontal, 0).padding(.bottom, 10)
                 switch sec {
                 case "Profile":
                     InfoRow(label: "Display name", value: session.userName + (session.isAdmin ? " (admin)" : ""))
@@ -197,7 +197,7 @@ struct SettingsScreen: View {
                 }
                 if !message.isEmpty { Text(message).font(.q(13)).foregroundStyle(Color.dimText).padding(.top, 8).padding(.horizontal, 4) }
             }
-            .padding(.horizontal, 12).padding(.top, 12)
+            .padding(.horizontal, 28).padding(.top, 12)
         }
         .sheet(isPresented: $pwOpen) { PasswordSheet(done: { pwOpen = false; message = "Password changed" }) }
         .alert("Quick Connect", isPresented: $qcOpen) {

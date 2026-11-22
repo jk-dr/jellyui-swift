@@ -227,7 +227,7 @@ struct H2: View {
     var body: some View {
         Text(text).font(.q(20)).foregroundStyle(Color.pink)
             .shadow(color: .black, radius: 4, y: 1)
-            .padding(.leading, 16).padding(.top, first ? 70 : 36)
+            .padding(.leading, 28).padding(.top, first ? 70 : 36) // the web's phone gutter
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

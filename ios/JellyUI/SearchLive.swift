@@ -54,7 +54,8 @@ struct SearchScreen: View {
                         .buttonStyle(.plain).opacity(Double(open)).offset(x: (1 - open) * 28)
                         .allowsHitTesting(open > 0.5)
                 }
-                .padding(.horizontal, 16).padding(.top, 10 + Insets.top).padding(.bottom, 4)
+                // this column sits inside the safe area already: the field lands exactly where the header's search bar is
+                .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 4)
 
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 0) { results }

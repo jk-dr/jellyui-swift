@@ -22,8 +22,8 @@ final class FullscreenTests: XCTestCase {
 
     func testFullscreenControlsRespond() {
         let a = launch("nowplaying")
-        let play = a.buttons["Play"]
-        XCTAssertTrue(play.waitForExistence(timeout: 40), "full-screen player did not open")
+        let pause = a.buttons["Pause"]
+        XCTAssertTrue(pause.waitForExistence(timeout: 40), "full-screen player did not open playing")
         sleep(4)
         shot(a, "fs-1-open")
 
@@ -36,10 +36,11 @@ final class FullscreenTests: XCTestCase {
             shot(a, "fs-2-lyric-tapped")
         }
 
-        // play / pause
-        XCTAssertTrue(play.isHittable, "play button is covered")
-        play.tap(); sleep(1); shot(a, "fs-3-paused")
-        play.tap(); sleep(1)
+        // play / pause: the tap must actually change the state (a covered button "passes" isHittable but does nothing)
+        pause.tap(); sleep(1); shot(a, "fs-3-paused")
+        XCTAssertTrue(a.buttons["Play"].waitForExistence(timeout: 3), "tapping Pause did not pause — the button is covered")
+        a.buttons["Play"].tap(); sleep(1)
+        XCTAssertTrue(a.buttons["Pause"].waitForExistence(timeout: 5), "tapping Play did not resume — the button is covered")
 
         // cover only, then back to lyrics
         let lyr = a.buttons["Lyrics"]
@@ -49,6 +50,8 @@ final class FullscreenTests: XCTestCase {
         let q = a.buttons["Open queue"]
         XCTAssertTrue(q.isHittable, "queue button is covered")
         q.tap(); sleep(2); shot(a, "fs-5-queue")
+        let qTitle = a.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Queue ('")).firstMatch
+        XCTAssertTrue(qTitle.waitForExistence(timeout: 3) && qTitle.isHittable, "tapping the queue button did not open the queue — the button is covered")
         a.swipeDown(); sleep(2); shot(a, "fs-6-queue-closed")
 
         // swipe down closes the player; the player bar is then tappable
