@@ -144,6 +144,8 @@ struct NowPlaying: View {
     @State private var gestureStart: CGPoint? // where the drag under way began; nil between drags
     @State private var early = false
     @State private var late = false
+    @State private var lyricsFor: String?
+    @State private var shown = false
     @State private var lines: [LyricLine] = []
     @State private var loading = true
     @State private var coverOnly = false
@@ -171,10 +173,8 @@ struct NowPlaying: View {
                 ZStack {
                     if early && !lines.isEmpty {
                         LyricsView(lines: lines, player: pm, topInset: 25, bottomInset: UIScreen.main.bounds.height * 0.4)
-                            .mask(LinearGradient(stops: [
-                                .init(color: .clear, location: 0), .init(color: .black.opacity(0.55), location: 0.06), .init(color: .black, location: 0.16),
-                                .init(color: .black, location: 0.74), .init(color: .black.opacity(0.45), location: 0.88), .init(color: .clear, location: 1),
-                            ], startPoint: .top, endPoint: .bottom))
+                            .mask(LinearGradient(gradient: LyricsFade.gradient, startPoint: .top, endPoint: .bottom))
+                            .id(lyricsFor) // a new song gets a new column: it starts at its own first line, with no glide from the last song's place
                             .transition(.opacity.animation(.easeIn(duration: 0.22)))
                     }
                     if loading && lines.isEmpty { Spinner() }
@@ -223,10 +223,12 @@ struct NowPlaying: View {
         .frame(width: UIScreen.main.bounds.width, height: H)
         .clipped()
         .offset(y: sheetY)
+        .opacity(shown ? 1 - 0.5 * Double(max(0, min(1, sheetY / H))) : 0)
         .ignoresSafeArea()
         .onAppear {
             FrameMonitor.event("player", "sheet mounted")
             withAnimation(.timingCurve(0.22, 0.61, 0.36, 1, duration: 0.45)) { sheetY = 0 }
+            withAnimation(.easeOut(duration: 0.38)) { shown = true }
             Task {
                 try? await Task.sleep(nanoseconds: 180_000_000); early = true
                 try? await Task.sleep(nanoseconds: 300_000_000); FrameMonitor.event("player", "heavy parts mount now"); withAnimation { late = true }
@@ -242,13 +244,14 @@ struct NowPlaying: View {
 
     private func loadSong(_ it: Item?) async {
         coverOnly = false
-        guard let it else { lines = []; loading = false; return }
+        // the last song's lines go at once (they used to stay up until the new ones arrived)
+        lines = []; loading = true; lyricsFor = it?.id
+        guard let it else { loading = false; return }
         // an answer for a song that is no longer the current one must not overwrite the new song's lyrics
         if let c = await LyricsStore.shared.cached(it.id) {
             guard !Task.isCancelled, it.id == pm.current?.id else { return }
             lines = c; loading = false; return
         }
-        lines = []; loading = true
         var r = await LyricsStore.shared.load(it)
         if r == nil, await LyricsStore.shared.didFail(it.id) { try? await Task.sleep(nanoseconds: 1_200_000_000); if Task.isCancelled { return }; r = await LyricsStore.shared.load(it) }
         guard it.id == pm.current?.id else { return }
@@ -261,7 +264,7 @@ struct NowPlaying: View {
         if leaving { return }
         leaving = true
         let H = UIScreen.main.bounds.height
-        withAnimation(.timingCurve(0.4, 0, 0.6, 1, duration: 0.3)) { sheetY = H }
+        withAnimation(.timingCurve(0.4, 0, 0.6, 1, duration: 0.3)) { sheetY = H; shown = false }
         Task { try? await Task.sleep(nanoseconds: 310_000_000); pm.showFull = false }
     }
 
@@ -313,7 +316,7 @@ struct NowPlaying: View {
                 HStack(spacing: 0) {
                     // the lyrics button (new in the Swift app): shows or hides the lyrics
                     cell { Button { if !noLyrics { withAnimation(.easeInOut(duration: 0.3)) { coverOnly.toggle() } } } label: {
-                        Image(systemName: "music.note").font(.system(size: 21, weight: .semibold)).foregroundStyle(ink.color()).frame(width: 46, height: 46)
+                        SVGPath(d: "M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z").fill(ink.color()).frame(width: 22, height: 22).frame(width: 46, height: 46)
                     }.buttonStyle(.plain).opacity(noLyrics ? 0.3 : 1).accessibilityLabel("Lyrics") }
                     fs("queueAdd", "Open queue") { toggleQueue(true, H) }
                     cell { Button { if let it { Favs.toggle(it) } } label: {
@@ -327,7 +330,8 @@ struct NowPlaying: View {
             }
             .frame(width: 304).padding(.bottom, 18 + bottom).contentShape(Rectangle()).gesture(zone(H))
             // no contentShape here: the padding below the bar is part of this view, and a shape over it swallowed every tap on the buttons under it
-            PlayBar(duration: pm.duration, ink: ink).padding(.horizontal, 14).padding(.bottom, 138 + bottom)
+            // no layout animation inside the bar: the sheet's opening animation slid the times in from the top-left corner
+            PlayBar(duration: pm.duration, ink: ink).transaction { $0.animation = nil }.padding(.horizontal, 14).padding(.bottom, 138 + bottom)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
     }
@@ -483,4 +487,16 @@ struct QueuePanel: View {
     private func pill<C: View>(width: CGFloat, @ViewBuilder _ c: () -> C, action: @escaping () -> Void) -> some View {
         Button(action: action) { c().frame(width: width, height: 44).background(Color.surfaceHi, in: Capsule()).shadow(color: .black.opacity(0.5), radius: 9, y: 4) }.buttonStyle(.plain)
     }
+}
+
+
+/// The lyrics column's top and bottom fade: an eased curve (no visible band where a straight ramp would end)
+enum LyricsFade {
+    static let gradient: Gradient = {
+        func ss(_ u: Double) -> Double { let x = max(0, min(1, u)); return x * x * (3 - 2 * x) }
+        var stops: [Gradient.Stop] = []
+        for k in 0...10 { let u = Double(k) / 10; stops.append(.init(color: .black.opacity(ss(u)), location: 0.2 * u)) }
+        for k in 0...10 { let u = Double(k) / 10; stops.append(.init(color: .black.opacity(ss(1 - u)), location: 0.68 + 0.32 * u)) }
+        return Gradient(stops: stops)
+    }()
 }

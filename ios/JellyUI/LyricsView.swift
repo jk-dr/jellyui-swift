@@ -58,24 +58,29 @@ private func rowText(_ words: [LyricWord], base: Int, size: CGFloat) -> Text {
     return out.font(.lato(size))
 }
 
-/// A long held word jumps letter by letter as it is sung (the web's letter jump).
+/// The web's letter jump: a word of n letters sung for at least max(360, 240 + 40 n) ms has its letters rise one after another.
+private func jumpNeed(_ n: Int) -> Double { max(0.36, 0.24 + 0.04 * Double(n)) }
+private func wordEnd(_ w: LyricWord) -> Double { (w.e ?? 0) > w.t ? w.e! : w.t + 0.25 }
 private func isJumpy(_ w: LyricWord) -> Bool {
-    let n = w.w.replacingOccurrences(of: " ", with: "").count
-    let dur = max(0.05, (w.e ?? w.t + 0.4) - w.t)
-    return n >= 3 && dur * 1000 >= max(360, 240 + 40 * Double(n))
+    let n = w.w.filter { !$0.isWhitespace }.count
+    return w.e != nil && n >= 3 && wordEnd(w) - w.t >= jumpNeed(n)
 }
+/// 0...1, eased both ways (the web's .5 - .5 cos)
+@inline(__always) private func ease(_ u: Double) -> Double { 0.5 - 0.5 * cos(Double.pi * max(0, min(1, u))) }
 
 // MARK: - Renderer
 
-/// Draws a row: each word dim, then lit up to its wipe position with a soft edge. Long words lift letter by letter.
+/// Draws a row as the web does: the unsung words at 30 %, a fill whose soft edge sweeps across each word while it is sung
+/// (coming in up to 0.35 s before the word and leaving up to 0.35 s after it), the sung word lifted 0.05 em, and long words'
+/// letters rising one after another as the edge passes them.
 private struct WipeRenderer: TextRenderer {
     var t: Double
     let words: [LyricWord]
     let back: [LyricWord]
     let size: CGFloat
-    var dim: Double = 0.32
+    var dim: Double = 0.3
 
-    var displayPadding: EdgeInsets { EdgeInsets(top: size * 0.14, leading: 2, bottom: 2, trailing: 2) }
+    var displayPadding: EdgeInsets { EdgeInsets(top: size * 0.12, leading: 2, bottom: 2, trailing: 2) }
 
     private func word(_ i: Int) -> LyricWord? {
         if i >= 10_000 { let j = i - 10_000; return back.indices.contains(j) ? back[j] : nil }
@@ -83,56 +88,65 @@ private struct WipeRenderer: TextRenderer {
     }
 
     func draw(layout: Text.Layout, in ctx: inout GraphicsContext) {
-        let soft = 0.35
+        if t == .infinity { for line in layout { for run in line { ctx.draw(run) } }; return } // not sung: plain, fully lit
+        let edge = Double(size) * 0.9 // the soft edge's width
         for line in layout {
             for run in line {
                 guard let tag = run[WordTag.self], let w = word(tag.i) else { ctx.draw(run); continue }
-                let p = Lyr.progress(w, t)
                 let r = run.typographicBounds.rect
-                let jumpy = p > 0 && p < 1 && isJumpy(w)
-
-                if jumpy {
-                    // letter jump: each glyph rises before its moment and settles after it
+                let dur = max(0.05, wordEnd(w) - w.t)
+                let W = max(1, Double(r.width))
+                // the middle of the soft edge, in px from the word's left: crosses the word while it is sung
+                let lead = min(0.35, (edge / 2) / (W / dur)), trail = lead
+                let rel = t - w.t
+                let mid: Double = rel < -lead ? -.infinity : (rel > dur + trail ? .infinity : W * rel / dur)
+                if isJumpy(w) && rel > -0.45 && rel < dur + 0.45 {
                     let n = max(1, run.count)
-                    let dur = max(0.05, (w.e ?? w.t + 0.4) - w.t)
-                    let rise = min(0.45, max(0.11, 0.06 * Double(n - 1), 1.2 * dur / Double(n)))
-                    let fall = max(0.08, 0.75 * rise)
-                    for (k, g) in run.enumerated() {
-                        let pk = w.t + dur * Double(k) / Double(n)
-                        let y = t < pk ? max(0, 1 - (pk - t) / rise) : max(0, 1 - (t - pk) / fall)
+                    let R = min(0.45, max(0.11, 0.06 * Double(n - 1), 1.2 * dur / Double(n)))
+                    let up = min(0.075, 0.035 + 0.025 * log(max(1, dur / jumpNeed(n)))) * Double(size)
+                    for g in run {
+                        let gr = g.typographicBounds.rect
+                        let pk = max(0, min(dur, dur * Double(gr.midX - r.minX) / W))
+                        let F = max(0.08, min(R * 0.75, dur - pk)), t0 = max(-0.45, pk - R)
+                        let y: Double = rel < t0 || rel > pk + F ? 0 : (rel <= pk ? ease((rel - t0) / max(0.001, pk - t0)) : ease(1 - (rel - pk) / F))
                         var c = ctx
-                        c.translateBy(x: 0, y: -size * 0.09 * CGFloat(y))
-                        drawWipe(g, rect: g.typographicBounds.rect, wordRect: r, p: p, soft: soft, in: &c)
+                        if y > 0 { c.translateBy(x: 0, y: -CGFloat(up * y)) }
+                        fill(g, rect: gr, wordX: r.minX, mid: mid, edge: edge, in: &c)
                     }
                 } else {
-                    drawWipe(run, rect: r, wordRect: r, p: p, soft: soft, in: &ctx)
+                    // the sung word sits 0.05 em higher: up over 0.3 s from 0.15 s before it, down over 0.32 s after it
+                    let upT = 0.3, pre = 0.15, down = 0.32, top = max(upT, dur)
+                    let a = rel + pre
+                    let y: Double = a <= 0 ? 0 : (a < upT ? ease(a / upT) : (a < top ? 1 : max(0, ease(1 - (a - top) / down))))
+                    var c = ctx
+                    if y > 0 { c.translateBy(x: 0, y: -CGFloat(0.05 * Double(size) * y)) }
+                    fill(run, rect: r, wordX: r.minX, mid: mid, edge: edge, in: &c)
                 }
             }
         }
     }
 
-    /// `rect` is the piece being drawn (a word or one glyph of it); the wipe runs across the whole word (`wordRect`).
-    private func drawWipe<S: GlyphDrawable>(_ piece: S, rect: CGRect, wordRect: CGRect, p: Double, soft: Double, in ctx: inout GraphicsContext) {
-        if p <= 0 { var c = ctx; c.opacity = dim; piece.draw(in: &c); return }
-        if p >= 1 { piece.draw(in: &ctx); return }
-        // dim under, lit on top through a soft-edged mask (the edge travels past the end so the last letters finish lit)
+    /// One piece (a word or a letter of it): dim, with the lit copy on top through an eased soft-edged mask.
+    private func fill<S: GlyphDrawable>(_ piece: S, rect: CGRect, wordX: CGFloat, mid: Double, edge: Double, in ctx: inout GraphicsContext) {
+        let x0 = Double(wordX) + mid - edge / 2, x1 = x0 + edge
+        if x1 <= Double(rect.minX) { var c = ctx; c.opacity = dim; piece.draw(in: &c); return }
+        if x0 >= Double(rect.maxX) { piece.draw(in: &ctx); return }
         var d = ctx; d.opacity = dim; piece.draw(in: &d)
-        let pos = p * (1 + soft)
-        let x0 = wordRect.minX + wordRect.width * CGFloat(max(0, min(1, pos - soft)))
-        let x1 = wordRect.minX + wordRect.width * CGFloat(max(0, min(1, pos)))
-        if x1 <= rect.minX { return }
         var lit = ctx
-        if x0 >= rect.maxX {
-            piece.draw(in: &lit)
-            return
-        }
         lit.clipToLayer { m in
-            m.fill(Path(rect.insetBy(dx: -2, dy: -size * 0.3)), with: .linearGradient(
-                Gradient(stops: [.init(color: .white, location: 0), .init(color: .clear, location: 1)]),
-                startPoint: CGPoint(x: x0, y: 0), endPoint: CGPoint(x: max(x1, x0 + 0.5), y: 0)))
+            m.fill(Path(rect.insetBy(dx: -2, dy: -size * 0.3)), with: .linearGradient(WipeRenderer.soft,
+                startPoint: CGPoint(x: x0, y: 0), endPoint: CGPoint(x: x1, y: 0)))
         }
         piece.draw(in: &lit)
     }
+
+    /// lit -> unlit along a smoothstep curve (no visible band at either end of the edge)
+    static let soft: Gradient = {
+        Gradient(stops: (0...8).map { k in
+            let u = Double(k) / 8
+            return .init(color: .white.opacity(1 - u * u * (3 - 2 * u)), location: u)
+        })
+    }()
 }
 
 private protocol GlyphDrawable { func draw(in ctx: inout GraphicsContext) }
@@ -160,7 +174,7 @@ private struct LyricRow: View, Equatable {
         VStack(alignment: .leading, spacing: 0) {
             if line.brk {
                 if active {
-                    TimelineView(.animation(minimumInterval: 1 / 30, paused: !playing)) { _ in
+                    TimelineView(.animation(paused: !playing)) { _ in
                         Dots(ink: ink, line: line, t: player.now + Lyr.ahead, size: size)
                     }
                 } else {
@@ -177,10 +191,11 @@ private struct LyricRow: View, Equatable {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.trailing, 20) // the sung line grows from its left edge: room for it
         .padding(.vertical, 25)
-        .opacity(level)
-        .scaleEffect(active ? 1.08 : 1, anchor: .leading)
-        .animation(.easeInOut(duration: 0.85), value: level)
-        .animation(.timingCurve(0.22, 0.61, 0.36, 1, duration: 0.8), value: active)
+        // the line that becomes current takes its full colour at once (a fade made the words hard to follow); the others ease
+        .opacity(line.brk ? (active ? (level < 0.1 ? 0.07 : 1) : 0) : level)
+        .animation(active ? nil : .easeOut(duration: 0.3), value: level)
+        .scaleEffect(active && !line.brk ? 1.08 : 1, anchor: .leading)
+        .animation(.timingCurve(0.45, 0.05, 0.15, 1, duration: 0.8), value: active)
         .contentShape(Rectangle())
         .onTapGesture(perform: onTap)
     }
@@ -216,7 +231,7 @@ private struct LyricRow: View, Equatable {
     }
 }
 
-/// Three dots for a long silence: they fill as the silence passes.
+/// Three dots for a long silence (the web's): each in turn lights over its third of the break and swells as it does.
 private struct Dots: View {
     let ink: Ink
     let line: LyricLine
@@ -226,17 +241,20 @@ private struct Dots: View {
     var body: some View {
         let from = line.t ?? 0
         let to = line.until ?? (line.e ?? from + 1)
-        let p = to > from ? max(0, min(1, (t - from) / (to - from))) : 0
-        HStack(spacing: size * 0.3) {
+        let p = max(0, min(1, (t - from) / max(0.5, to - from)))
+        HStack(spacing: size * 0.6) {
             ForEach(0..<3, id: \.self) { i in
-                let seg = max(0, min(1, p * 3 - Double(i)))
+                let q = max(0, min(1, (p - Double(i) / 3) * 3))
+                let bounce = q > 0 && q < 1 ? sin(Double.pi * q) : 0
                 Circle()
-                    .fill(ink.color(0.3 + 0.7 * seg))
-                    .frame(width: size * 0.42, height: size * 0.42)
-                    .scaleEffect(CGFloat(0.8 + 0.2 * seg))
+                    .fill(ink.color())
+                    .frame(width: size * 0.5, height: size * 0.5)
+                    .opacity(0.28 + 0.72 * q)
+                    .scaleEffect(CGFloat(1 + 0.6 * bounce))
             }
         }
-        .frame(height: size * 1.2)
+        .padding(.leading, size * 0.2)
+        .frame(height: size * 1.4)
     }
 }
 
@@ -252,6 +270,7 @@ struct LyricsView: View {
     @State private var clock = LyricsClock()
     @State private var hold = Date.distantPast
     @State private var seekTick = 0
+    @State private var placed = false
 
     // written out (not the memberwise one): the private state above would make that initializer private
     init(lines: [LyricLine], player: PlayerModel, topInset: CGFloat = 40, bottomInset: CGFloat = 200) {
@@ -300,9 +319,15 @@ struct LyricsView: View {
                     proxy.scrollTo(new, anchor: UnitPoint(x: 0.5, y: 0.5))
                 }
             }
+            .opacity(placed ? 1 : 0)
             .onAppear {
                 start()
+                // the lazy column has no layout yet on the first pass: place it, then place it again once it has, then show it
                 if synced, clock.sidx >= 0 { proxy.scrollTo(clock.sidx, anchor: UnitPoint(x: 0.5, y: 0.5)) }
+                DispatchQueue.main.async {
+                    if synced, clock.sidx >= 0 { proxy.scrollTo(clock.sidx, anchor: UnitPoint(x: 0.5, y: 0.5)) }
+                    withAnimation(.easeOut(duration: 0.2)) { placed = true }
+                }
             }
             .onChange(of: lines.first?.id) { _, _ in start() }
             .onChange(of: playing) { _, _ in start() } // a resume or a seek wakes the clock at once

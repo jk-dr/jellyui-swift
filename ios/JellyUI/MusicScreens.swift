@@ -217,7 +217,7 @@ struct SongRow: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     if fav { Icon(name: "heart", size: 16, color: .pink) }
                 }
-                .padding(.vertical, now ? 6.8 : 8).padding(.horizontal, now ? 10.8 : 12)
+                .padding(.vertical, 8).padding(.horizontal, 12) // the same size playing or not (it shifted by 2 pt)
                 .background(now ? Color(hex: 0x1d1618) : Color(hex: 0x121214), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(now ? Color.pink.opacity(0.35) : .clear, lineWidth: 1.2))
             }

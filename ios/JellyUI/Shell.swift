@@ -9,6 +9,7 @@ enum Insets {
     }
     static var top: CGFloat { window?.safeAreaInsets.top ?? 62 }
     static var bottom: CGFloat { window?.safeAreaInsets.bottom ?? 34 }
+    static let mini: CGFloat = 112 // the floating player bar and its gap
     /// the native tab bar's height above the home indicator (iOS 26 floating glass bar)
     static let bar: CGFloat = 56
 }
@@ -151,7 +152,7 @@ private struct TabStack<Root: View>: View {
                 }
         }
         .overlay(alignment: .top) { TabHeader(tab: tab) }
-        .safeAreaInset(edge: .bottom, spacing: 0) { MiniSlot() }
+        .overlay(alignment: .bottom) { MiniSlot() } // pages make their own room for it (PageEnd)
     }
 }
 
@@ -165,6 +166,12 @@ private struct TabHeader: View {
             if !(nav.paths[tab] ?? []).isEmpty { BackPill() }
         }
     }
+}
+
+/// The room after a page's last row: more while the player bar floats over the bottom, so the last rows can be scrolled clear of it.
+struct PageEnd: View {
+    @Environment(PlayerModel.self) private var player
+    var body: some View { Color.clear.frame(height: player.current != nil ? 16 + Insets.mini : 16) }
 }
 
 /// The player bar. Its own view, so a song change does not redraw the tab's page.
@@ -324,7 +331,7 @@ struct Page<Content: View>: View {
             VStack(alignment: .leading, spacing: 0) {
                 Color.clear.frame(height: Insets.top)
                 content()
-                Color.clear.frame(height: 16)
+                PageEnd()
             }
         }
         Group {

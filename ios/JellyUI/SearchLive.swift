@@ -58,7 +58,7 @@ struct SearchScreen: View {
                 .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 4)
 
                 ScrollView(showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 0) { results }
+                    VStack(alignment: .leading, spacing: 0) { results; PageEnd() }
                         .padding(.horizontal, 14).padding(.top, 6)
                     Color.clear.frame(height: 120)
                 }
