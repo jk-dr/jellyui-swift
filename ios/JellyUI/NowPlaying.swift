@@ -303,6 +303,15 @@ struct NowPlaying: View {
             .allowsHitTesting(fullQ)
             .zIndex(5)
 
+            // the whole width around the controls takes the swipes (down: lower the queue or close; up: raise it), as the web's
+            // "everything under the progress bar"; it ends where the small queue's list begins, so it never covers the songs
+            Color.clear.contentShape(Rectangle())
+                .frame(height: 222).padding(.bottom, bottom + 4)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .offset(y: -L)
+                .allowsHitTesting(qp < 1.5)
+                .gesture(zone(H))
+
             controls(it, noLyrics: noLyrics, bottom: bottom, H: H)
                 .offset(y: -L)
                 .opacity(qp > 1 ? Double(max(0, 2 - qp) * 1.4 - 0.4) : 1) // they leave through the top: gone before they reach the status bar
@@ -435,7 +444,7 @@ struct NowPlaying: View {
                     if let it { cell { SongMenu(it: it, player: true) { Icon(name: "moreV", size: 22, color: ink.color()).frame(width: 46, height: 46) } } }
                 }
             }
-            .frame(width: 304).padding(.bottom, 18 + bottom).contentShape(Rectangle()).gesture(zone(H))
+            .frame(width: 304).padding(.bottom, 18 + bottom).contentShape(Rectangle()).simultaneousGesture(zone(H))
             // no contentShape here: the padding below the bar is part of this view, and a shape over it swallowed every tap on the buttons under it
             // no layout animation inside the bar: the sheet's opening animation slid the times in from the top-left corner
             PlayBar(duration: pm.duration, ink: ink).geometryGroup().padding(.horizontal, 14).padding(.bottom, 138 + bottom)
