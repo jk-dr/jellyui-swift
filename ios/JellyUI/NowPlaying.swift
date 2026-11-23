@@ -57,6 +57,7 @@ struct MiniPlayer: View {
     @Environment(PlayerModel.self) private var pm
     @Environment(Nav.self) private var nav
     @State private var closeAsk = false
+    @State private var opening = false
     @State private var tint = Color(hex: 0x1c1c1f)
 
     var body: some View {
@@ -101,6 +102,9 @@ struct MiniPlayer: View {
                 // a skip changes the bar's colour at once; a song that ended fades into the next one's
                 if pm.smoothChange { withAnimation(.easeInOut(duration: 0.6)) { tint = c2 } } else { tint = c2 }
             }
+            // every picture the full screen draws (its big cover, the next song's, the queue's thumbnails) is fetched while
+            // the bar shows, so the sheet never slides up with an empty square
+            .task(id: "\(it.id)|\(pm.queue.count)") { await FullArt.warm(pm) }
             .padding(.horizontal, 12)
             .contextMenu {
                 Button { Favs.toggle(it) } label: { Label(fav ? "Remove from Favourites" : "Favourite", systemImage: fav ? "heart.slash" : "heart") }
@@ -121,7 +125,20 @@ struct MiniPlayer: View {
     private func open() {
         FrameMonitor.event("player", "open")
         // a full screen that was left marked open but is not showing (a close that was cut short) is reset, so a tap always opens it
-        if pm.showFull { pm.showFull = false; DispatchQueue.main.async { pm.showFull = true } } else { pm.showFull = true }
+        func show() { if pm.showFull { pm.showFull = false; DispatchQueue.main.async { pm.showFull = true } } else { pm.showFull = true } }
+        guard let c = pm.current, !FullArt.ready(c) else { show(); return }
+        // the art is not in memory yet (a slow network, a song just started): the sheet waits for it, at most 0.8 s
+        if opening { return }
+        opening = true
+        Task { @MainActor in
+            let load = Task { await FullArt.prepare(c) }
+            let end = Date().addingTimeInterval(0.8)
+            while !FullArt.ready(c) && Date() < end { try? await Task.sleep(nanoseconds: 25_000_000) }
+            _ = load
+            opening = false
+            FrameMonitor.event("player", FullArt.ready(c) ? "art ready" : "art late, opening anyway")
+            show()
+        }
     }
 
     private func mini(_ name: String, color: Color = Color(hex: 0xd4d4d4), _ a: @escaping () -> Void) -> some View {
@@ -130,6 +147,47 @@ struct MiniPlayer: View {
 }
 
 /// A thin progress bar, drawn from the player's own clock a frame at a time.
+/// The pictures the full screen needs, loaded ahead of it.
+@MainActor
+enum FullArt {
+    /// the big cover, and the small one the colours, the backdrop and the header come from
+    static func ready(_ it: Item) -> Bool {
+        guard let small = Pic.square(it, 160) else { return true }
+        let big = Pic.square(it, 700)
+        return CoverColours.cached(small) != nil && CoverInk.cached(small) != nil
+            && ImageStore.shared.cached(small) != nil && (big.map { ImageStore.shared.cached($0) != nil } ?? true)
+    }
+
+    static func prepare(_ it: Item) async {
+        guard let small = Pic.square(it, 160) else { return }
+        async let big = loadBig(Pic.square(it, 700))
+        _ = await CoverColours.load(small)
+        _ = await CoverInk.load(small)
+        _ = await big
+    }
+
+    private static func loadBig(_ u: URL?) async -> UIImage? {
+        guard let u else { return nil }
+        return await ImageStore.shared.load(u)
+    }
+
+    /// the song playing and the next one in full, the queue's nearby rows as thumbnails
+    static func warm(_ pm: PlayerModel) async {
+        guard let c = pm.current else { return }
+        await prepare(c)
+        if Task.isCancelled { return }
+        if let n = pm.next { await prepare(n) }
+        if Task.isCancelled { return }
+        let q = pm.queue, i = pm.index
+        let lo = max(0, i - 2), hi = min(q.count, i + 25)
+        guard lo < hi else { return }
+        let urls = q[lo..<hi].compactMap { Pic.thumb($0, 132) }.filter { ImageStore.shared.cached($0) == nil }
+        await withTaskGroup(of: Void.self) { g in
+            for u in urls { g.addTask { _ = await ImageStore.shared.load(u) } }
+        }
+    }
+}
+
 struct MiniProgress: View {
     let duration: Double
     @Environment(PlayerModel.self) private var pm
