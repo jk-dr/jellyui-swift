@@ -245,7 +245,9 @@ struct NowPlaying: View {
             // the strip down the right edge: a swipe up there raises the queue a level (closed -> small -> full), down lowers it or closes the screen.
             // It reaches down to the risen controls, so it works over the small queue too (the shrunk cover no longer covers the right side).
             if qp < 1.5 {
-                Color.clear.contentShape(Rectangle()).frame(width: 46).frame(maxWidth: .infinity, alignment: .trailing)
+                // the web's strip is 46, but its lines run nearly to it; here the lines stop 92 from the edge, so the strip takes all of that empty
+                // margin (88) and is easy to hit without covering any words
+                Color.clear.contentShape(Rectangle()).frame(width: 88).frame(maxWidth: .infinity, alignment: .trailing)
                     .padding(.top, top + 64).padding(.bottom, 222 + bottom + min(L, g.lift))
                     .gesture(zone(H))
             }
