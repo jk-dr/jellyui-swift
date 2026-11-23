@@ -15,6 +15,8 @@ final class LyricsClock {
     private(set) var sidx = -1
     /// a line before the sung one whose last words are still filling (the web's .fill): it stays lit, full size, until they are sung
     private(set) var fill = -1
+    /// the last change of the sung row was a jump (back, or past more than one row: a seek), not the song moving on
+    private(set) var jumped = false
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var ends: [Double] = []
 
@@ -37,7 +39,7 @@ final class LyricsClock {
         let t = player.now + Lyr.ahead
         let i = Lyr.indexAt(starts, t)
         let s = max(i, Lyr.indexAt(sstarts, t))
-        if i != idx { idx = i }
+        if i != idx { let j = i < idx || i > idx + 1; if j != jumped { jumped = j }; idx = i }
         if s != sidx { sidx = s }
         // the line before still filling (its last word ends after now)
         var f = -1
@@ -247,6 +249,7 @@ private struct LyricRow: View, Equatable {
     var dimmed = false // paused: every row at 7 %, faded in and out
     var soft = false // out of focus (the web's blur of the lines not being sung)
     var tick = 0 // changes on a seek while paused, so the sung row redraws at the new place
+    var snap = false // a seek: every row takes its new look at once (no fades, no grow, no blur easing)
     var onTap: () -> Void = {}
 
     static func == (a: LyricRow, b: LyricRow) -> Bool {
@@ -277,14 +280,14 @@ private struct LyricRow: View, Equatable {
         // the line that becomes current takes its full colour at once (a fade made the words hard to follow); the others ease
         .opacity(line.brk ? (active ? (dimmed ? 0.07 : 1) : 0) : (dimmed ? 0.07 : level))
         // smooth, never sudden: the line coming in brightens quickly (so it can be followed), the others ease over 0.7 s
-        .animation(active ? nil : .easeInOut(duration: 0.7), value: level)
+        .animation(active || snap ? nil : .easeInOut(duration: 0.7), value: level)
         .animation(.easeInOut(duration: 0.4), value: dimmed)
         // out of focus: sharp at once when it comes into focus; going out, it first finishes shrinking (0.8 s), then blurs over 0.7 s
         .blur(radius: soft ? size * 0.1 : 0)
-        .animation(soft ? .easeInOut(duration: 0.7).delay(0.84) : .easeOut(duration: 0.25), value: soft)
+        .animation(snap ? nil : (soft ? .easeInOut(duration: 0.7).delay(0.84) : .easeOut(duration: 0.25)), value: soft)
         .scaleEffect(active && !line.brk ? 1.08 : 1, anchor: .leading)
         // growing: done in 0.5 s, so the line is at full size (it turns current 0.65 s ahead) before its first word is sung; shrinking keeps the slow 0.8 s
-        .animation(active ? .timingCurve(0.25, 0.1, 0.25, 1, duration: 0.5) : .timingCurve(0.45, 0.05, 0.15, 1, duration: 0.8), value: active)
+        .animation(snap ? nil : (active ? .timingCurve(0.25, 0.1, 0.25, 1, duration: 0.5) : .timingCurve(0.45, 0.05, 0.15, 1, duration: 0.8)), value: active)
         .contentShape(Rectangle())
         .onTapGesture(perform: onTap)
     }
@@ -354,6 +357,21 @@ private struct SeekWatch: View {
     var body: some View { Color.clear.onChange(of: player.position) { _, _ in changed() } }
 }
 
+/// Culling: a row outside the visible column is not drawn at all (no text, no blur), only kept for the layout.
+/// The lazy stack already builds rows only near the screen; this stops the built ones off screen from being drawn.
+private struct Cull: ViewModifier {
+    @State private var shown = true
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown ? 1 : 0)
+            .onScrollVisibilityChange(threshold: 0.001) { v in
+                guard v != shown else { return }
+                var t = Transaction(); t.disablesAnimations = true
+                withTransaction(t) { shown = v }
+            }
+    }
+}
+
 // MARK: - The column
 
 struct LyricsView: View {
@@ -384,6 +402,8 @@ struct LyricsView: View {
         let idx = clock.idx
         let synced = lines.contains { $0.t != nil }
         let playing = player.isPlaying
+        // a seek: rows ahead go dark and rows behind lit at once, as if the song had always been there
+        let snap = clock.jumped || Date().timeIntervalSince(seekedAt) < 1.0
         ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 0) {
@@ -404,9 +424,11 @@ struct LyricsView: View {
                                 dimmed: !playing,
                                 soft: synced && !l.brk && !isActive && !filling && !near,
                                 tick: seekTick,
+                                snap: snap,
                                 onTap: { if let lt = l.t { player.seek(to: max(0, lt - 0.05)); hold = .distantPast; Task { try? await Task.sleep(for: .milliseconds(60)); start() } } }
                             )
                             .equatable()
+                            .modifier(Cull())
                             .accessibilityElement(children: .combine)
                             .accessibilityAddTraits(.isButton)
                             .accessibilityIdentifier("lyric-\(i)")
@@ -451,6 +473,8 @@ struct LyricsView: View {
             .onChange(of: lines.first?.id) { _, _ in start() }
             .onChange(of: playing) { _, _ in start() } // a resume or a seek wakes the clock at once
             .onChange(of: player.seeks) { _, _ in seekedAt = Date(); hold = .distantPast; start() }
+            // the seek has only begun (the bar let go): the rows are set for the new place now, not when the audio gets there
+            .onChange(of: player.seekStarts) { _, _ in seekedAt = Date(); hold = .distantPast; start() }
             // the small queue opened or closed: the sung line glides to its new resting place, with the queue's own curve
             .onChange(of: anchor) { _, a in
                 guard synced, clock.sidx >= 0 else { return }

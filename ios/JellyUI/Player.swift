@@ -19,6 +19,8 @@ final class PlayerModel {
     var shuffleOn = false
     /// bumped by every seek: the lyrics re-sync to it at once
     var seeks = 0
+    /// counts seeks as they BEGIN (seeks counts them as they land): the lyrics move to the new place at once
+    var seekStarts = 0
     /// the last song change was the song ending (the backdrop and colours cross-fade); a skip, a jump or a tap changes at once
     var smoothChange = true
     /// where a seek is going: shown (by `now`) until the player is really there, so the bar and the lyrics do not flick back first
@@ -230,6 +232,7 @@ final class PlayerModel {
         seekToken += 1
         let tok = seekToken
         seekTarget = max(0, s)
+        seekStarts += 1
         player.seek(to: CMTime(seconds: max(0, s), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
             DispatchQueue.main.async { // once the player is really there
                 guard let self else { return }
