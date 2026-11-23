@@ -215,6 +215,7 @@ struct NowPlaying: View {
     @State private var sheetY: CGFloat = UIScreen.main.bounds.height
     /// the queue: 0 closed, 1 small (the controls risen, the list under them), 2 full (the list fills the screen); in between while a finger moves it
     @State private var qp: CGFloat = 0
+    @State private var zoneDrag = false // a swipe from the controls is moving the queue: the list under it must not scroll
     @State private var qBase: CGFloat = 0 // the level when the drag began
     @State private var qFromButton = false // the full queue was opened by the queue button (its close button then closes it altogether)
     @State private var mode = 0 // 0 undecided, 1 closing the sheet, 2 moving the queue
@@ -338,7 +339,7 @@ struct NowPlaying: View {
             }
 
             // the queue: always as tall as the full queue, moved (never resized) with the finger
-            QueuePanel(level: qp, set: { setQ($0) }, zone: zone(H, noQueue: true), top: top, bottom: bottom)
+            QueuePanel(level: qp, set: { setQ($0) }, zone: zone(H, noQueue: true), top: top, bottom: bottom, locked: zoneDrag)
                 .frame(height: H - g.qtop).frame(maxHeight: .infinity, alignment: .bottom)
                 .offset(y: g.listY(qp))
                 .opacity(late ? Double(min(1, qp * 5)) : 0)
@@ -374,7 +375,8 @@ struct NowPlaying: View {
 
             controls(it, noLyrics: noLyrics, bottom: bottom, H: H)
                 .offset(y: -L)
-                .opacity(qp > 1 ? Double(max(0, 2 - qp) * 1.4 - 0.4) : 1) // they leave through the top: gone before they reach the status bar
+                // no fade on the way to the full queue: they slide up and are cut off at the status bar's edge
+                .mask { VStack(spacing: 0) { Color.clear.frame(height: top); Color.black } }
                 .allowsHitTesting(qp < 1.5)
         }
         .environment(\.ink, ink)
@@ -440,6 +442,7 @@ struct NowPlaying: View {
 
     /// the web's --qease: .27 s, cubic-bezier(.5, 0, .2, 1)
     private func setQ(_ level: CGFloat) {
+        zoneDrag = false
         if level < 1.5 && level > 0.5 { qFromButton = false } // the small queue: from here the full one returns to it
         withAnimation(.timingCurve(0.5, 0, 0.2, 1, duration: 0.27)) { qp = level }
         qBase = level
@@ -460,12 +463,13 @@ struct NowPlaying: View {
                     else { mode = 2 }
                 }
                 if mode == 1 { sheetY = max(0, dy) }
-                else { qp = qg.level(qg.lifted(qBase) - dy) }
+                else { if !zoneDrag { zoneDrag = true }; qp = qg.level(qg.lifted(qBase) - dy) }
             }
             .onEnded { v in
                 let dy = v.translation.height
                 let flick = abs(v.predictedEndTranslation.height - dy) > 90
                 gestureStart = nil
+                zoneDrag = false
                 if mode == 1 {
                     if dy > FAR || (flick && dy > 30) { requestClose() } else { withAnimation(SHEET) { sheetY = 0 } }
                 } else if mode == 2 {
@@ -608,6 +612,7 @@ struct QueuePanel: View {
     var zone: AnyGesture<DragGesture.Value>
     var top: CGFloat
     var bottom: CGFloat
+    var locked = false
     @Environment(PlayerModel.self) private var pm
     @State private var touching = false // the person's finger is scrolling the list (programmatic scrolls never change the level)
 
@@ -643,6 +648,7 @@ struct QueuePanel: View {
                         Color.black
                     }
                 }
+                .scrollDisabled(locked)
                 .onScrollPhaseChange { _, p in touching = p == .interacting || p == .tracking }
                 .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y + $0.contentInsets.top } action: { old, y in
                     // only the person's own scrolling moves the queue: pulled down past the top, down a level; scrolled up from the small queue, the full queue
@@ -656,6 +662,11 @@ struct QueuePanel: View {
                 // the playing song goes to the top at once, with no animation
                 .onChange(of: pm.index) { _, n in var t = Transaction(); t.disablesAnimations = true; withTransaction(t) { proxy.scrollTo(n, anchor: rowTop) } }
             }
+            // the 40 hidden above the small queue's list lie under the controls' bottom row: a swipe that starts there moves the
+            // queue (as on the buttons), it never scrolls the list
+            let k = max(0, min(1, level - 1))
+            Color.clear.contentShape(Rectangle()).frame(height: 40 * (1 - k)).offset(y: -40 * (1 - k))
+                .allowsHitTesting(!full).gesture(zone)
             // the chevron at the top of the full queue lowers it to the small one
             Button { set(1) } label: {
                 Image(systemName: "chevron.compact.down").font(.system(size: 26, weight: .medium)).foregroundStyle(.white.opacity(0.75))
