@@ -357,21 +357,6 @@ private struct SeekWatch: View {
     var body: some View { Color.clear.onChange(of: player.position) { _, _ in changed() } }
 }
 
-/// Culling: a row outside the visible column is not drawn at all (no text, no blur), only kept for the layout.
-/// The lazy stack already builds rows only near the screen; this stops the built ones off screen from being drawn.
-private struct Cull: ViewModifier {
-    @State private var shown = true
-    func body(content: Content) -> some View {
-        content
-            .opacity(shown ? 1 : 0)
-            .onScrollVisibilityChange(threshold: 0.001) { v in
-                guard v != shown else { return }
-                var t = Transaction(); t.disablesAnimations = true
-                withTransaction(t) { shown = v }
-            }
-    }
-}
-
 // MARK: - The column
 
 struct LyricsView: View {
@@ -387,6 +372,7 @@ struct LyricsView: View {
     @State private var hold = Date.distantPast
     @State private var seekTick = 0
     @State private var placed = false
+    @State private var browsing = false // the person is scrolling the lyrics: every row is drawn
     @State private var seekedAt = Date.distantPast // a seek (the bar let go, a line tapped, the lock screen) just landed
 
     // written out (not the memberwise one): the private state above would make that initializer private
@@ -428,7 +414,10 @@ struct LyricsView: View {
                                 onTap: { if let lt = l.t { player.seek(to: max(0, lt - 0.05)); hold = .distantPast; Task { try? await Task.sleep(for: .milliseconds(60)); start() } } }
                             )
                             .equatable()
-                            .modifier(Cull())
+                            // culling: rows well away from the sung line are not drawn (no text, no blur), only kept for the layout.
+                            // By distance from the sung line, not by what is on screen: the sheet slides in from below the screen,
+                            // and a row hidden for being "off screen" did not come back until the slide had finished.
+                            .opacity(synced && far(i) ? 0 : 1)
                             .accessibilityElement(children: .combine)
                             .accessibilityAddTraits(.isButton)
                             .accessibilityIdentifier("lyric-\(i)")
@@ -441,9 +430,10 @@ struct LyricsView: View {
                 // which slid every line sideways a little at each line change
                 .padding(.horizontal, 18)
             }
-            .simultaneousGesture(DragGesture(minimumDistance: 8).onChanged { _ in hold = Date().addingTimeInterval(3) })
+            .simultaneousGesture(DragGesture(minimumDistance: 8).onChanged { _ in hold = Date().addingTimeInterval(3); if !browsing { browsing = true } })
             .onChange(of: clock.sidx) { old, new in
                 guard synced, Date() > hold else { return }
+                if browsing { browsing = false }
                 if new < old {
                     var t = Transaction(); t.disablesAnimations = true
                     withTransaction(t) { proxy.scrollTo(max(0, new), anchor: UnitPoint(x: 0.5, y: anchor)) }
@@ -485,6 +475,12 @@ struct LyricsView: View {
             .background { if !playing { SeekWatch(player: player) { seekTick += 1 } } }
             .onDisappear { clock.stop() }
         }
+    }
+
+    /// a row more than 8 lines above or 12 below the sung one (the screen shows about 4 above and 6 below)
+    private func far(_ i: Int) -> Bool {
+        guard !browsing, clock.sidx >= 0 else { return false }
+        return i < clock.sidx - 8 || i > clock.sidx + 12
     }
 
     private func start() {
